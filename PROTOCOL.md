@@ -81,3 +81,9 @@ F0 D3 <section> <last> <Lc> <chunk> <block> <data…>
 - Refresh can answer `68CA` (seen twice, ~0.8 s after the refresh command, on first taps). Einky's
   fallback `F0 D4 85 00 00` then returned `9000` without polling (no confirmed refresh) or `68CB`
   after 30 s. Our app treats any non-success answer as a failure and asks for a re-tap.
+- The frame keeps an uploaded image in memory while unpowered between taps: after a connection
+  drop during the refresh, a new session of `00D1`, `F0D8`, then `F0D4 85 80 00` (no `F0D3`
+  upload) shows the correct image (verified 2026-11-02). TapFrame resumes this way when the same
+  frame UID is tapped again.
+- LZO-compressed uploads with literal runs plus M2/M3 matches are accepted (156 blocks vs 272
+  uncompressed for a photo; upload ~6.3 s vs ~10.2 s).

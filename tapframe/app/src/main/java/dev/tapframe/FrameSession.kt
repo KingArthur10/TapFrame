@@ -55,8 +55,8 @@ class FrameSession(
     }
 
     /**
-     * Experimental: refresh without uploading, after a connection dropped once the upload had
-     * finished. Works only if the frame kept the image in memory while unpowered.
+     * Refresh without uploading, after a connection dropped once the upload had finished. The
+     * frame keeps the uploaded image while unpowered between taps (verified 2026-11-02).
      */
     fun resumeRefresh() {
         iso.connect()
