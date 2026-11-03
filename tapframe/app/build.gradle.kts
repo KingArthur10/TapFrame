@@ -1,3 +1,10 @@
+import java.util.Properties
+
+// Release signing key: path and password live in the git-ignored local.properties.
+val local = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -15,8 +22,18 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        if (local.getProperty("release.storeFile") != null) create("release") {
+            storeFile = file(local.getProperty("release.storeFile"))
+            storePassword = local.getProperty("release.storePassword")
+            keyAlias = local.getProperty("release.keyAlias")
+            keyPassword = local.getProperty("release.storePassword")
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

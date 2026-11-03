@@ -3,5 +3,6 @@ tools/
 apk/
 work/
 captures/
-tapframe/app/src/main/assets/replay_capture1.txt
+tapframe/app/src/debug/assets/replay_capture1.txt
 __pycache__/
+keystore/

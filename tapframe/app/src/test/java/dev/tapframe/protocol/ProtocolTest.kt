@@ -16,7 +16,7 @@ class ProtocolTest {
      * The 187 F0D3 APDUs Einky sent in capture 1 (working directory is the app module). The capture
      * holds a personal photo and is not in git; tests that need it are skipped when it is absent.
      */
-    private val captureFile = File("src/main/assets/replay_capture1.txt")
+    private val captureFile = File("src/debug/assets/replay_capture1.txt")
     private val captured: List<String> by lazy {
         captureFile.readLines().map { it.trim() }.filter { it.startsWith("F0D3") }
     }
