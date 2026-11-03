@@ -4,6 +4,7 @@ import dev.tapframe.protocol.Frame
 import dev.tapframe.protocol.Ink
 import dev.tapframe.render.Canvas
 import dev.tapframe.render.Dither
+import dev.tapframe.render.Palette
 import kotlin.math.roundToInt
 
 /** Panel characterization patterns; see TESTPLAN.md for what each one measures. */
@@ -30,7 +31,61 @@ object TestPatterns {
         Pattern("T6-checker-inv", "T6 Big checker inverted") { bigChecker(inverted = true) },
         Pattern("T7-codes", "T7 All 16 pixel codes") { allCodes() },
         Pattern("T8-black-shapes", "T8 Black dot shapes on colors") { blackShapes() },
+        Pattern("T9a-chart-fs", "T9a Color chart: Floyd–Steinberg") { chart(Dither.Method.FLOYD_STEINBERG, Palette.MEASURED) },
+        Pattern("T9b-chart-vivid", "T9b Color chart: Vivid (ideal inks)") { chart(Dither.Method.FLOYD_STEINBERG, Palette.IDEAL) },
+        Pattern("T9c-chart-bluenoise", "T9c Color chart: blue noise") { chart(Dither.Method.BLUE_NOISE, Palette.MEASURED) },
+        Pattern("T10-pair-ramps", "T10 Pair mixes: blue-noise ramps") { pairRamps() },
+        Pattern("C1-calibration", "C1 Preview calibration image") { dev.tapframe.render.PreviewLook.pattern() },
     )
+
+    /**
+     * Target colors of the T9 charts, in buffer order (6 per row, 5 rows): the 24 ColorChecker
+     * patches (sRGB, BabelColor averages), then pale, medium and deep skin, light sky, grass and pink.
+     */
+    val CHART = intArrayOf(
+        0x735244, 0xC29682, 0x627A9D, 0x576C43, 0x8580B1, 0x67BDAA,
+        0xD67E2C, 0x505BA6, 0xC15A63, 0x5E3C6C, 0x9DBC40, 0xE0A32E,
+        0x383D96, 0x469449, 0xAF363C, 0xE7C71F, 0xBB5695, 0x0885A1,
+        0xF3F3F2, 0xC8C8C8, 0xA0A0A0, 0x7A7A79, 0x555555, 0x343434,
+        0xEBC8B4, 0xA06E55, 0x5A3C2D, 0x96BEE6, 0x3C8C28, 0xF08C96,
+    )
+
+    /** Chart patch geometry: 62x56 patches with 4 px white gutters fill the buffer exactly. */
+    const val CHART_W = 62
+    const val CHART_H = 56
+    const val CHART_GAP = 4
+
+    /**
+     * [CHART] as 30 patches, each dithered on its own (so error does not leak between patches)
+     * with [method] against [palette], the way the photo pipeline dithers.
+     */
+    private fun chart(method: Dither.Method, palette: Palette): ByteArray {
+        val c = Canvas()
+        CHART.forEachIndexed { i, color ->
+            val patch = Canvas(CHART_W, CHART_H)
+            val serpentine = method != Dither.Method.BLUE_NOISE
+            Dither.dither(IntArray(CHART_W * CHART_H) { color }, CHART_W, CHART_H, method, palette, serpentine).copyInto(patch.codes)
+            c.blit(CHART_GAP + (i % 6) * (CHART_W + CHART_GAP), CHART_GAP + (i / 6) * (CHART_H + CHART_GAP), patch)
+        }
+        return c.codes
+    }
+
+    /**
+     * Each of the 15 ink pairs (rows, in [INKS] order: KW, KY, KR, KB, KG, WY, …, BG) mixed at
+     * 0/8 … 8/8 of the second ink (columns), placed by a blue-noise threshold like a photo dither.
+     * Rows are 20 px tall from y = 2, columns 44 px wide from x = 2.
+     */
+    private fun pairRamps(): ByteArray {
+        val c = Canvas()
+        val pairs = INKS.indices.flatMap { i -> (i + 1 until INKS.size).map { INKS[i] to INKS[it] } }
+        pairs.forEachIndexed { row, (a, b) ->
+            for (step in 0..8) {
+                val f = step / 8f
+                c.fill(2 + step * 44, 2 + row * 20, 44, 20) { x, y -> if (Dither.blueNoise(x, y) < f) b.code else a.code }
+            }
+        }
+        return c.codes
+    }
 
     fun byId(id: String): Pattern = all.first { it.id == id }
 

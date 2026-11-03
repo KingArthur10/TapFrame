@@ -27,6 +27,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -51,6 +53,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -88,6 +91,7 @@ import dev.tapframe.app.Screen
 import dev.tapframe.app.SendState
 import dev.tapframe.exam.Exam
 import dev.tapframe.render.PhotoPipeline
+import dev.tapframe.render.PreviewLook
 import dev.tapframe.render.Settings
 import java.text.DateFormat
 import java.util.Date
@@ -113,6 +117,7 @@ fun TapFrameApp(
         }
         Screen.RESULT -> "Ready to send"
         Screen.SETTINGS -> "Settings"
+        Screen.CALIBRATE -> "Match preview to frame"
     }
     Scaffold(
         topBar = {
@@ -138,6 +143,7 @@ fun TapFrameApp(
                 Screen.EXAM -> ExamScreen(vm)
                 Screen.RESULT -> ResultScreen(vm)
                 Screen.SETTINGS -> SettingsScreen(vm, onOpenLab)
+                Screen.CALIBRATE -> CalibrationScreen(vm)
             }
             vm.busyMessage?.let { Busy(it) }
         }
@@ -187,7 +193,7 @@ private fun HomeScreen(vm: AppViewModel, nfcAvailable: Boolean, nfcEnabled: () -
             }
         }
         items(vm.historyItems, key = { it.id }) { item ->
-            val bmp = remember(item.id) { item.preview }
+            val bmp = remember(item.id, vm.look) { item.preview?.let(vm::withLook) }
             Card(Modifier.clickable { selected = item }) {
                 if (bmp != null) Picture(bmp, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT))
             }
@@ -198,7 +204,7 @@ private fun HomeScreen(vm: AppViewModel, nfcAvailable: Boolean, nfcEnabled: () -
             onDismissRequest = { selected = null },
             title = { Text("Send again?") },
             text = { Column {
-                item.preview?.let { Picture(it, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT)) }
+                remember(item.id, vm.look) { item.preview?.let(vm::withLook) }?.let { Picture(it, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT)) }
                 Spacer(Modifier.height(8.dp))
                 Text(item.description, style = MaterialTheme.typography.bodySmall)
                 Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(item.time)), style = MaterialTheme.typography.bodySmall)
@@ -362,6 +368,7 @@ private fun caption(s: Settings, current: Settings?): String = when {
     s.contrast != current.contrast -> if (s.contrast > current.contrast) "More contrast" else "Less contrast"
     s.detail != current.detail -> if (s.detail > current.detail) "More detail" else "Less detail"
     s.saturation != current.saturation -> if (s.saturation > current.saturation) "More color" else "Less color"
+    s.keepHue != current.keepHue -> if (s.keepHue) "True hues" else "Bolder hues"
     else -> "Current"
 }
 
@@ -409,6 +416,15 @@ private fun SettingsScreen(vm: AppViewModel, onOpenLab: () -> Unit) {
             )
             HorizontalDivider()
             ListItem(
+                headlineContent = { Text("Match preview to frame") },
+                supportingContent = { Text(
+                    if (vm.look.isIdentity) "Adjust how previews look so they match your frame in your light."
+                    else "Previews are adjusted to match your frame. Tap to change.",
+                ) },
+                modifier = Modifier.clickable(onClick = vm::openCalibration),
+            )
+            HorizontalDivider()
+            ListItem(
                 headlineContent = { Text("Reset saved styles") },
                 supportingContent = { Text("Forget the settings remembered for each photo style.") },
                 modifier = Modifier.clickable { confirmReset = true },
@@ -445,6 +461,69 @@ private fun SettingsScreen(vm: AppViewModel, onOpenLab: () -> Unit) {
         confirmButton = { TextButton(onClick = { vm.resetProfiles(); confirmReset = false }) { Text("Reset") } },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } },
     )
+}
+
+// ---- Preview calibration -----------------------------------------------------------------------
+
+/**
+ * Match-by-eye calibration: send the calibration image, hold the phone beside the frame, and adjust
+ * the preview until both look alike. Only changes how previews are shown.
+ */
+@Composable
+private fun CalibrationScreen(vm: AppViewModel) {
+    var draft by remember { mutableStateOf(vm.look) }
+    var bmp by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(draft) { bmp = vm.calibrationPreview(draft) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Text(
+            "1. Send the calibration image to your frame.\n" +
+                "2. Hold the phone beside the frame where you usually look at it, at the brightness you usually use.\n" +
+                "3. Adjust until the picture below looks like the frame. Start with brightness; compare the white and black squares, then the colors.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.height(12.dp))
+        FilledTonalButton(onClick = vm::sendCalibration, Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("Send calibration image")
+        }
+        Spacer(Modifier.height(12.dp))
+        Box(
+            Modifier.fillMaxWidth(0.75f).align(Alignment.CenterHorizontally).aspectRatio(CARD_ASPECT)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            bmp?.let { Picture(it, Modifier.fillMaxSize()) } ?: CircularProgressIndicator(Modifier.size(24.dp))
+        }
+        Spacer(Modifier.height(8.dp))
+        LookSlider("Brightness", draft.brightness, PreviewLook.BRIGHTNESS, "Darker", "Brighter") { draft = draft.copy(brightness = it) }
+        LookSlider("Contrast", draft.contrast, PreviewLook.CONTRAST, "Flatter", "Punchier") { draft = draft.copy(contrast = it) }
+        LookSlider("Color", draft.saturation, PreviewLook.SATURATION, "Muted", "Vivid") { draft = draft.copy(saturation = it) }
+        LookSlider("Warmth", draft.warmth, PreviewLook.WARMTH, "Cooler", "Warmer") { draft = draft.copy(warmth = it) }
+        LookSlider("Tint", draft.tint, PreviewLook.TINT, "Greener", "Pinker") { draft = draft.copy(tint = it) }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = { draft = PreviewLook() }, Modifier.weight(1f)) { Text("Reset") }
+            Button(onClick = { vm.saveLook(draft); vm.back() }, Modifier.weight(1f)) { Text("Save") }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "This only changes how previews look on your phone; images sent to the frame stay the same.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun LookSlider(
+    label: String, value: Float, range: ClosedFloatingPointRange<Float>, low: String, high: String, onChange: (Float) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text(label, style = MaterialTheme.typography.titleSmall)
+        Slider(value = value, onValueChange = onChange, valueRange = range)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(low, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(high, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 // ---- Sending ---------------------------------------------------------------------------------

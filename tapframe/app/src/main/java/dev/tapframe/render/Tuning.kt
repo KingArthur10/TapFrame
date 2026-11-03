@@ -37,6 +37,12 @@ data class Settings(
     val nearest: Boolean = false,
     /** Cartoon stylization; with an effect, [detail] sets the outline strength and [tone] is unused. */
     val effect: Effect = Effect.NONE,
+    /**
+     * Keep hues the inks can't reach at full strength (magenta, deep skin, pink) by lowering their
+     * chroma instead of letting the dither drift to a neighbouring hue (see [GamutMap]). Not used
+     * by [ToneMap.VIVID], which deliberately dithers against idealized inks.
+     */
+    val keepHue: Boolean = true,
 ) {
     companion object {
         val BRIGHTNESS = -0.3f..0.3f
@@ -61,22 +67,22 @@ enum class ContentType(val label: String, val candidates: List<Dither.Method>, v
     GRAPHIC(
         "Illustration / graphic",
         listOf(Dither.Method.NONE, Dither.Method.BAYER, Dither.Method.BLUE_NOISE, Dither.Method.FLOYD_STEINBERG),
-        Settings(Dither.Method.NONE),
+        Settings(Dither.Method.NONE, keepHue = false),
     ),
     PIXEL_ART(
         "Pixel art",
         listOf(Dither.Method.NONE, Dither.Method.BAYER, Dither.Method.FLOYD_STEINBERG, Dither.Method.ATKINSON),
-        Settings(Dither.Method.NONE, nearest = true),
+        Settings(Dither.Method.NONE, nearest = true, keepHue = false),
     ),
     CARTOON(
         "Cartoon",
         listOf(Dither.Method.NONE, Dither.Method.BLUE_NOISE, Dither.Method.BAYER, Dither.Method.FLOYD_STEINBERG),
-        Settings(Dither.Method.NONE, effect = Effect.CARTOON),
+        Settings(Dither.Method.NONE, effect = Effect.CARTOON, keepHue = false),
     ),
     CARTOON_AI(
         "Cartoon (AI)",
         listOf(Dither.Method.NONE, Dither.Method.BLUE_NOISE, Dither.Method.BAYER, Dither.Method.FLOYD_STEINBERG),
-        Settings(Dither.Method.NONE, effect = Effect.AI_CARTOON),
+        Settings(Dither.Method.NONE, effect = Effect.AI_CARTOON, keepHue = false),
     );
 
     companion object {

@@ -184,6 +184,27 @@ class PhotoPipelineTest {
     }
 
     /**
+     * Optional: with TAPFRAME_PHOTO (304x400 PNG), writes Natural and Balanced with hue preservation
+     * off and on (simulated frame view above, ink maps below) to build/photos/real_hue.png.
+     */
+    @Test
+    fun exportRealPhotoHue() {
+        val path = System.getenv("TAPFRAME_PHOTO") ?: return
+        val img = ImageIO.read(File(path))
+        val photo = IntArray(pw * ph).also { img.getRGB(0, 0, pw, ph, it, 0, pw) }.map { it and 0xFFFFFF }.toIntArray()
+        val variants = listOf(ToneMap.NATURAL, ToneMap.BALANCED).flatMap { t ->
+            listOf(false, true).map { Settings(Dither.Method.FLOYD_STEINBERG, t, keepHue = it) }
+        }
+        val sheet = BufferedImage(pw * variants.size, ph * 2, BufferedImage.TYPE_INT_RGB)
+        variants.forEachIndexed { i, s ->
+            val codes = PhotoPipeline.render(photo, s)
+            sheet.setRGB(pw * i, 0, pw, ph, PhotoPipeline.simulatedPortrait(codes), 0, pw)
+            sheet.setRGB(pw * i, ph, pw, ph, Preview.portraitArgb(codes), 0, pw)
+        }
+        ImageIO.write(sheet, "png", File(File("build/photos").apply { mkdirs() }, "real_hue.png"))
+    }
+
+    /**
      * Optional: with TAPFRAME_PHOTO (304x400 PNG) and TAPFRAME_AI (the AI model's 304x400 output),
      * writes cartoon variants (simulated frame view above, ink maps below) to build/photos/real_cartoon.png.
      */

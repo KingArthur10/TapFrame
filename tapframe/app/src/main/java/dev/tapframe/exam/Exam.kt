@@ -10,7 +10,8 @@ import kotlin.random.Random
  * "Eye exam" for tuning one photo: first a scrolling list of every photo style (content type), most
  * likely first, then quads of four options: tone mapping, algorithm, brightness, contrast, detail
  * and color. Each tuning quad holds the current best, one step down, one
- * step up, and a challenger (an untried tone map or algorithm), in shuffled positions. Pure logic;
+ * step up, and a challenger (an untried tone map or algorithm; in the color round, the current
+ * settings with hue preservation flipped), in shuffled positions. Pure logic;
  * the UI renders [step] and reports the chosen index back.
  */
 class Exam(
@@ -85,7 +86,9 @@ class Exam(
             Round.BRIGHTNESS -> tune(Param.BRIGHTNESS)
             Round.CONTRAST -> tune(Param.CONTRAST)
             Round.DETAIL -> tune(Param.DETAIL)
-            Round.SATURATION -> tune(Param.SATURATION)
+            // The color round's fourth option flips hue preservation instead of a challenger
+            // (Vivid ignores it, so it gets a normal challenger).
+            Round.SATURATION -> tune(Param.SATURATION, current.copy(keepHue = !current.keepHue).takeIf { current.tone != ToneMap.VIVID })
         }
         return Step.Quad(r.title, round + 1, rounds.size, options.shuffled(random))
     }
@@ -94,14 +97,14 @@ class Exam(
      * Four distinct options: current, one step down and one step up (further steps the other way
      * at a range end), and a challenger; falls back to more steps if no challenger is left.
      */
-    private fun tune(p: Param): List<Settings> {
+    private fun tune(p: Param, alternative: Settings? = null): List<Settings> {
         val v = p.get(current)
         val steps = listOf(-1, 1, 2, -2, 3, -3).map { v + it * p.step }
             .filter { it in p.range.start - 1e-4f..p.range.endInclusive + 1e-4f }
             .map { p.set(current, it.coerceIn(p.range)) }
         val options = linkedSetOf(current)
         steps.filter { it != current }.take(2).forEach { options += it }
-        challenger()?.let { options += it }
+        (alternative ?: challenger())?.let { options += it }
         steps.forEach { if (options.size < 4) options += it }
         return options.toList()
     }

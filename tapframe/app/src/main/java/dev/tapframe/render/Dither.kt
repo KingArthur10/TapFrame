@@ -143,6 +143,9 @@ object Dither {
         Thresholds(64, IntArray(64 * 64) { (bytes[2 * it].toInt() and 0xFF) or ((bytes[2 * it + 1].toInt() and 0xFF) shl 8) })
     }
 
+    /** The blue-noise threshold at ([x], [y]), in 0..1 (tiles every 64 px). */
+    internal fun blueNoise(x: Int, y: Int): Float = BLUE_NOISE_64.at(x, y) + 0.5f
+
     /** Inks per Knoll plan (more = finer tone steps, slower), and how hard each pick corrects. */
     private const val KNOLL_N = 16
     private const val KNOLL_GAIN = 0.75f

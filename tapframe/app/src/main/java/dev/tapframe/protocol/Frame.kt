@@ -3,6 +3,11 @@ package dev.tapframe.protocol
 /**
  * Spectra 6 inks, their pixel codes, and how they look on the panel: sRGB measured from RAW
  * photos (session 2, 2026-11-02), normalized so the panel's own white is #FFFFFF.
+ *
+ * Green is the exception: RAW measured it nearly neutral (#434F4B, OKLab chroma 0.017), but on the
+ * second (red) unit it reads clearly green to the eye and in photos (session 4: chroma 0.042 at
+ * hue 156° in JPEG, where JPEG boosts the other inks only 1.0–1.4×). Kept at RAW lightness with
+ * chroma 0.035 at hue 158°.
  */
 enum class Ink(val code: Int, val rgb: Int) {
     BLACK(0, 0x504557),
@@ -10,7 +15,7 @@ enum class Ink(val code: Int, val rgb: Int) {
     YELLOW(2, 0xFFCD68),
     RED(3, 0xAF4341),
     BLUE(5, 0x0F5890),
-    GREEN(6, 0x434F4B),
+    GREEN(6, 0x3D5346),
 }
 
 /** Panel geometry and image encoding. */

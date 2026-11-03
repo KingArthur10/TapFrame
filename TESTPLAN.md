@@ -205,3 +205,82 @@ reduced on facial skin (eye band kept); shadows aimed at the black ink's real (v
 Presets: Natural (gain 1), Balanced (base ×0.85, gain 1.8), Strong local (×0.7, 2.6), Vivid (Einky-style).
 Open: our simulated preview makes Einky/Vivid look pale; needs a RAW photo of Einky's output on the
 frame to check.
+
+## Session 4 — color rendition under ambient light (red frame, no flash)
+
+Goal: measure what colors the dither actually produces (not just the six inks), with even light
+and paper white as the reference, so the pipeline's color targets and the preview can be corrected.
+This is a second unit (red bezel), so it also shows unit-to-unit ink variation.
+
+Setup (replaces the flash setup above):
+1. **Light:** one kind of light only: bright, diffuse daylight from a window (no direct sun) *or*
+   room lights, not a mix. Flash **off**, Night Sight off. Don't move the lights between shots.
+2. **Paper:** white printer paper beside the frame, same plane, evenly lit, no shadow on it or the panel.
+3. **Glare:** look at the panel from the shooting position; tilt until no window/lamp reflection shows.
+4. **Camera:** RAW+JPEG, 1× lens, phone braced on the same spot every shot (exposures are longer
+   without flash). If the paper looks blown out, set exposure −0.7.
+5. Open Settings → Lab, keep USB connected. One photo per send, after "Done".
+
+| Step | Pattern | Purpose |
+|---|---|---|
+| S4-1 | T6 Solid white | Flat field (lighting across the panel) and panel white vs paper white |
+| S4-2 | T1 Palette swatches | The six inks on this unit, relative to paper |
+| S4-3 | T9a Color chart: Floyd–Steinberg | 30 target colors (ColorChecker + skin/sky/grass) through the accurate dither |
+| S4-4 | T9b Color chart: Vivid | Same chart through the Vivid (people default) dither |
+| S4-5 | T9c Color chart: blue noise | Same chart through the landscape default dither |
+| S4-6 | T10 Pair mixes: blue-noise ramps | Each ink pair at 0–100% in 1/8 steps, scattered like a photo dither |
+| S4-7 | T6 Solid white | Light drift check (compare with S4-1) |
+| S4-8 | (optional) a real photo from the app | End-to-end check after corrections |
+
+Chart layout (buffer order, 6 per row): row 1 dark skin, light skin, blue sky, foliage, blue flower,
+bluish green; row 2 orange, purplish blue, moderate red, purple, yellow-green, orange-yellow; row 3
+blue, green, red, yellow, magenta, cyan; row 4 the six grays; row 5 pale, medium and deep skin, light
+sky, grass, pink. Expected images: `testplan/expected/T9*.png`, `T10-pair-ramps.png`.
+
+### Session 4 results (2026-11-03, JPEG only — no RAW)
+
+Photos: `captures/session4/` (W, W, T1, T9a, T9b, T9c, T10, W). Tools: `scripts/find_panel.py` (finds
+the panel inside the red bezel), `scripts/register.py` (refines corners by correlating with the
+expected image; correlation 0.5 → 0.75 on the charts), `scripts/color_chart.py` (patch colors,
+normalized to the white gutters).
+
+- Light: one-sided lamp, panel brightness falls ~1.8× from top to bottom. The chart gutters cancel
+  this; T1 needs flat-fielding with the white shots (which differ from each other by up to 18%).
+- Panel white ≈ L 0.74–0.80 relative to paper (≈ 40–45% reflectance), slightly cool.
+- Absolute lightness is unusable: the same black ink reads #2C2231 in T9a and #53525F in T1 (HDR+).
+  All T1 inks read ~0.11 L lighter than the first unit's RAW values. No ink values changed.
+- Hue (robust to the tone curve; T9a and T9c agree): the photo matches the frame simulation's
+  hue for blues, reds, purples, oranges (±5°), but the *dither itself* shifts out-of-gamut colors:
+  greens/grass/foliage 131–144° → ~84° (khaki/olive), cyan 220° → 265° (blue), magenta 344° → 22°
+  (red), dark/deep skin → neutral or violet (black ink tint). Fix: hue-preserving gamut mapping
+  before dithering.
+- This unit's yellow looks lemon (photo hue 96° vs simulated 83°) and greens greener than predicted:
+  possible unit-to-unit ink difference; needs RAW to confirm.
+- T9b is not representative of Vivid: it dithers against ideal inks without Vivid's tone curve.
+
+### Hue-preserving gamut mapping (2026-11-03)
+
+`render/GamutMap.kt`: out-of-gamut colors move toward the panel's gray (at a lightness halfway to the
+hue's cusp) until they fit inside the ink hull, keeping hue. The measured inks only have usable
+chroma at 0–80° (red–yellow) and 250–360° (blue–magenta); the green ink is nearly neutral, so
+yellow-green to cyan can't be kept and fades back to the plain dither. Simulated T9a chart, mean hue
+error on chromatic patches: 23.4° → 19.1° (magenta 22° → 12° from target 344°, deep skin 335° → 37°
+from 47°, pink 31° → 14° from 14°); greens and cyan unchanged. Setting `keepHue` (default on for
+photos, off for flat-ink styles), toggled in the exam's Color round. Not applied to Vivid, where it
+flattened the image.
+
+### Green ink correction (2026-11-03)
+
+User: on the frame (T1) green is dark but clearly green. Session-4 JPEG shows chroma 0.042 at 156° vs
+the RAW value's 0.017 (JPEG boosts the other inks only 1.0–1.4×). `Ink.GREEN` changed #434F4B →
+#3D5346 (RAW lightness, chroma 0.035, hue 158°). This makes the preview show green areas as green;
+the dither uses the green ink a little more (foliage patch hue 91° → 102°). Light/vivid greens still
+render olive: one dark, weak green ink cannot make them, and keeping their hue left them gray
+(tried; reverted).
+
+### Match-by-eye preview calibration (2026-11-03)
+
+Settings → Match preview to frame: send the calibration image (also Lab pattern C1: solid inks, a
+dithered gray ramp, 12 dithered everyday colors), hold the phone beside the frame, and adjust
+brightness, contrast, color, warmth and tint until the preview matches. `render/PreviewLook.kt`;
+applied to all previews and history thumbnails, never to what is sent.

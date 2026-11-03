@@ -70,6 +70,7 @@ object PhotoPipeline {
         val input = if (ai) requireNotNull(aiCartoon) { "AI cartoon image missing" } else fitted
         val styled = Cartoon.stylize(Adjust.apply(input, settings), PORTRAIT_W, PORTRAIT_H, smooth = !ai, outline = settings.detail)
         val mapped = LocalToneMap.apply(styled.rgb, PORTRAIT_W, PORTRAIT_H, 1f, 1f, emptyList())
+            .let { if (settings.keepHue) GamutMap.MEASURED.apply(it) else it }
         val diffusion = settings.method in setOf(Dither.Method.FLOYD_STEINBERG, Dither.Method.STUCKI, Dither.Method.ATKINSON)
         val codes = Dither.dither(toBuffer(mapped), Frame.WIDTH, Frame.HEIGHT, settings.method, Palette.MEASURED, serpentine = diffusion)
         val outline = toBuffer(IntArray(styled.outline.size) { if (styled.outline[it]) 1 else 0 })
@@ -99,9 +100,11 @@ object PhotoPipeline {
             ToneMap.VIVID -> {
                 // Einky-style: optional detail boost, lift mid-tones, dither against idealized inks.
                 val detailed = if (gain == 1f) adjusted else LocalToneMap.sharpenOnly(adjusted, PORTRAIT_W, PORTRAIT_H, gain, faces)
+                // No gamut mapping: Vivid relies on believing the inks are more vivid than they are.
                 Adjust.apply(detailed, VIVID_CURVE) to Palette.IDEAL
             }
-            else -> LocalToneMap.apply(adjusted, PORTRAIT_W, PORTRAIT_H, tone.baseContrast, gain, faces) to Palette.MEASURED
+            else -> LocalToneMap.apply(adjusted, PORTRAIT_W, PORTRAIT_H, tone.baseContrast, gain, faces)
+                .let { if (settings.keepHue) GamutMap.MEASURED.apply(it) else it } to Palette.MEASURED
         }
         val diffusion = settings.method in setOf(Dither.Method.FLOYD_STEINBERG, Dither.Method.STUCKI, Dither.Method.ATKINSON)
         return Dither.dither(toBuffer(prepared), Frame.WIDTH, Frame.HEIGHT, settings.method, palette, serpentine = diffusion)

@@ -19,6 +19,7 @@ import dev.tapframe.render.ContentType
 import dev.tapframe.render.Effect
 import dev.tapframe.render.Face
 import dev.tapframe.render.PhotoPipeline
+import dev.tapframe.render.PreviewLook
 import dev.tapframe.render.Settings
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Screens of the photo flow. */
-enum class Screen { HOME, CROP, EXAM, RESULT, SETTINGS }
+enum class Screen { HOME, CROP, EXAM, RESULT, SETTINGS, CALIBRATE }
 
 /**
  * App state: the chosen photo (rotated source, crop, faces, style ranking), the tuning exam,
@@ -79,11 +80,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openSettings() { screen = Screen.SETTINGS }
 
+    // ---- Preview calibration -----------------------------------------------------------------
+
+    /** The saved on-screen look of previews (see [PreviewLook]). */
+    var look by mutableStateOf(loadLook())
+        private set
+
+    private fun loadLook() = PreviewLook(
+        prefs.getFloat("look.brightness", 1f), prefs.getFloat("look.contrast", 1f), prefs.getFloat("look.saturation", 1f),
+        prefs.getFloat("look.warmth", 0f), prefs.getFloat("look.tint", 0f),
+    )
+
+    private val calibrationCodes by lazy { PreviewLook.pattern() }
+    private val calibrationSim by lazy { PhotoPipeline.simulatedPortrait(calibrationCodes) }
+
+    fun openCalibration() { screen = Screen.CALIBRATE }
+
+    /** The calibration image's preview under [candidate] (computed off the main thread). */
+    suspend fun calibrationPreview(candidate: PreviewLook): Bitmap = withContext(Dispatchers.Default) {
+        Bitmap.createBitmap(candidate.apply(calibrationSim), PhotoPipeline.PORTRAIT_W, PhotoPipeline.PORTRAIT_H, Bitmap.Config.ARGB_8888)
+    }
+
+    fun sendCalibration() {
+        sender.arm("calibration", "Preview calibration image", Frame.packPixels(calibrationCodes))
+    }
+
+    /** Saves [newLook]; previews are re-rendered with it. */
+    fun saveLook(newLook: PreviewLook) {
+        look = newLook
+        prefs.edit()
+            .putFloat("look.brightness", newLook.brightness).putFloat("look.contrast", newLook.contrast)
+            .putFloat("look.saturation", newLook.saturation).putFloat("look.warmth", newLook.warmth)
+            .putFloat("look.tint", newLook.tint).apply()
+        previews.clear()
+    }
+
+    /** A stored (uncalibrated) preview bitmap shown with the current look. */
+    fun withLook(bmp: Bitmap): Bitmap {
+        if (look.isIdentity) return bmp
+        val px = IntArray(bmp.width * bmp.height).also { bmp.getPixels(it, 0, bmp.width, 0, 0, bmp.width, bmp.height) }
+        return Bitmap.createBitmap(look.apply(px), bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+    }
+
     /** System back: returns true if handled. */
     fun back(): Boolean {
         screen = when (screen) {
             Screen.HOME -> return false
             Screen.CROP, Screen.SETTINGS -> Screen.HOME
+            Screen.CALIBRATE -> Screen.SETTINGS
             Screen.EXAM -> Screen.CROP
             Screen.RESULT -> Screen.EXAM.also { restartExam() }
         }
@@ -194,10 +238,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Requests the simulated preview for [settings]; it appears in [previews] when ready. */
     fun requestPreview(settings: Settings) {
         if (previews.containsKey(settings)) return
+        val currentLook = look
         viewModelScope.launch {
             val bmp = withContext(Dispatchers.Default) {
                 Bitmap.createBitmap(
-                    PhotoPipeline.simulatedPortrait(codesFor(settings)),
+                    currentLook.apply(PhotoPipeline.simulatedPortrait(codesFor(settings))),
                     PhotoPipeline.PORTRAIT_W, PhotoPipeline.PORTRAIT_H, Bitmap.Config.ARGB_8888,
                 )
             }
@@ -269,6 +314,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun resetProfiles() = profiles.reset()
 
     fun describe(s: Settings) =
-        "${s.tone.label}, ${s.method.label}, brightness %+.1f, contrast %+.1f, detail ×%.1f, color ×%.2f"
-            .format(s.brightness, s.contrast, s.detail, s.saturation)
+        "${s.tone.label}, ${s.method.label}, brightness %+.1f, contrast %+.1f, detail ×%.1f, color ×%.2f%s"
+            .format(s.brightness, s.contrast, s.detail, s.saturation, if (s.keepHue) ", true hues" else "")
 }
