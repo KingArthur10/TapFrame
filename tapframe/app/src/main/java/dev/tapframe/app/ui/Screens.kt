@@ -430,7 +430,11 @@ private fun SettingsScreen(vm: AppViewModel, onOpenLab: () -> Unit) {
             )
             ListItem(
                 headlineContent = { Text("About") },
-                supportingContent = { Text("TapFrame 1.0 · an independent, offline app for Tapmora-style NFC e-ink frames.") },
+                supportingContent = { Text(
+                    "TapFrame 1.0 · an independent, offline app for Tapmora-style NFC e-ink frames.\n" +
+                        "The AI cartoon style uses White-box Cartoonization (Wang & Yu, CVPR 2020), " +
+                        "CC BY-NC-SA 4.0: non-commercial use only.",
+                ) },
             )
         }
     }

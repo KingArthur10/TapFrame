@@ -18,6 +18,9 @@ enum class ToneMap(val label: String, val baseContrast: Float, val detailGain: F
     VIVID("Vivid", 1.0f, 1.0f),
 }
 
+/** Optional stylization before dithering. */
+enum class Effect { NONE, CARTOON, AI_CARTOON }
+
 /** Everything the user can tune for one photo. */
 data class Settings(
     val method: Dither.Method,
@@ -32,6 +35,8 @@ data class Settings(
     val detail: Float = 1f,
     /** Scale with nearest neighbour (crisp pixel art) instead of averaging. */
     val nearest: Boolean = false,
+    /** Cartoon stylization; with an effect, [detail] sets the outline strength and [tone] is unused. */
+    val effect: Effect = Effect.NONE,
 ) {
     companion object {
         val BRIGHTNESS = -0.3f..0.3f
@@ -62,6 +67,16 @@ enum class ContentType(val label: String, val candidates: List<Dither.Method>, v
         "Pixel art",
         listOf(Dither.Method.NONE, Dither.Method.BAYER, Dither.Method.FLOYD_STEINBERG, Dither.Method.ATKINSON),
         Settings(Dither.Method.NONE, nearest = true),
+    ),
+    CARTOON(
+        "Cartoon",
+        listOf(Dither.Method.NONE, Dither.Method.BLUE_NOISE, Dither.Method.BAYER, Dither.Method.FLOYD_STEINBERG),
+        Settings(Dither.Method.NONE, effect = Effect.CARTOON),
+    ),
+    CARTOON_AI(
+        "Cartoon (AI)",
+        listOf(Dither.Method.NONE, Dither.Method.BLUE_NOISE, Dither.Method.BAYER, Dither.Method.FLOYD_STEINBERG),
+        Settings(Dither.Method.NONE, effect = Effect.AI_CARTOON),
     );
 
     companion object {
@@ -81,6 +96,9 @@ enum class ContentType(val label: String, val candidates: List<Dither.Method>, v
                 GRAPHIC to (if (colors <= 48) 3f else if (colors <= 256) 1.5f else 0.2f),
                 PEOPLE to (if (faces > 0) 3.5f else 0.8f) + (if (colors > 256) 0.5f else 0f),
                 LANDSCAPE to (if (colors > 256) 2f else 0.5f),
+                // Creative styles: always offered, after the content-based guesses.
+                CARTOON to 0.1f,
+                CARTOON_AI to 0.05f,
             )
             return entries.sortedByDescending { score[it] }
         }

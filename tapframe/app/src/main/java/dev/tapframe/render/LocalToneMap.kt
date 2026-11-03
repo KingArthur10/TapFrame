@@ -145,6 +145,8 @@ object LocalToneMap {
     }
 
     /** Mean over a (2r+1)^2 window with edge clamping, via summed-area table. */
+    internal fun boxMean(src: FloatArray, w: Int, h: Int, r: Int): FloatArray = box(src, w, h, r)
+
     private fun box(src: FloatArray, w: Int, h: Int, r: Int): FloatArray {
         val sat = DoubleArray((w + 1) * (h + 1))
         for (y in 0 until h) {

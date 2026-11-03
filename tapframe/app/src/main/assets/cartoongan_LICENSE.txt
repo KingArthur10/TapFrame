@@ -1,0 +1,5 @@
+cartoongan_dr.tflite — White-box Cartoonization (Xinrui Wang, Jinze Yu, CVPR 2020),
+TFLite conversion by Sayak Paul and Margaret Maynard-Reid (TF Hub: sayakpaul/lite-model/cartoongan/dr/1).
+
+Original weights: Copyright (C) Xinrui Wang. Licensed under CC BY-NC-SA 4.0
+(https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode). Commercial application is prohibited.

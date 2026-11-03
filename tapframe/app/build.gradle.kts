@@ -20,6 +20,8 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        // Pixel phones are 64-bit ARM; drop LiteRT's native code for other CPUs.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     signingConfigs {
@@ -44,6 +46,11 @@ android {
         compose = true
     }
 
+    // Keep the model uncompressed so it can be memory-mapped.
+    androidResources {
+        noCompress += "tflite"
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -60,5 +67,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    // On-device inference for the AI cartoon style (model bundled in assets; no network).
+    implementation("com.google.ai.edge.litert:litert:1.4.2")
     testImplementation("junit:junit:4.13.2")
 }

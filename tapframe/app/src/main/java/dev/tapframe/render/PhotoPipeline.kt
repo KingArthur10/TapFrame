@@ -1,6 +1,7 @@
 package dev.tapframe.render
 
 import dev.tapframe.protocol.Frame
+import dev.tapframe.protocol.Ink
 
 /**
  * Photo -> pixel codes. The card is viewed in portrait (304 x 400) while the panel buffer is
@@ -31,12 +32,16 @@ object PhotoPipeline {
      * Scales the [crop] of [argb] (w x h) to 304 x 400: box filter in linear light, or nearest
      * neighbour ([nearest]) to keep pixel art crisp. Areas outside the image are white.
      */
-    fun fitPortrait(argb: IntArray, w: Int, h: Int, nearest: Boolean = false, crop: Crop = centerCrop(w, h)): IntArray {
+    fun fitPortrait(argb: IntArray, w: Int, h: Int, nearest: Boolean = false, crop: Crop = centerCrop(w, h)): IntArray =
+        fit(argb, w, h, crop, PORTRAIT_W, PORTRAIT_H, nearest)
+
+    /** As [fitPortrait] but to any output size (the crop is stretched if the aspects differ). */
+    fun fit(argb: IntArray, w: Int, h: Int, crop: Crop, outW: Int, outH: Int, nearest: Boolean = false): IntArray {
         require(argb.size == w * h)
-        val sx = crop.width / PORTRAIT_W
-        val sy = crop.height / PORTRAIT_H
-        return IntArray(PORTRAIT_W * PORTRAIT_H) { i ->
-            val ox = i % PORTRAIT_W; val oy = i / PORTRAIT_W
+        val sx = crop.width / outW
+        val sy = crop.height / outH
+        return IntArray(outW * outH) { i ->
+            val ox = i % outW; val oy = i / outW
             if (nearest) {
                 val x = (crop.left + (ox + 0.5f) * sx).toInt()
                 val y = (crop.top + (oy + 0.5f) * sy).toInt()
@@ -56,6 +61,22 @@ object PhotoPipeline {
         }
     }
 
+    /**
+     * Cartoon: stylize (classic smoothing, or the AI model's output in [aiCartoon]), map onto the
+     * measured inks (flat with Method.NONE, otherwise dithered), then stamp outlines in black ink.
+     */
+    private fun renderCartoon(fitted: IntArray, settings: Settings, aiCartoon: IntArray?): ByteArray {
+        val ai = settings.effect == Effect.AI_CARTOON
+        val input = if (ai) requireNotNull(aiCartoon) { "AI cartoon image missing" } else fitted
+        val styled = Cartoon.stylize(Adjust.apply(input, settings), PORTRAIT_W, PORTRAIT_H, smooth = !ai, outline = settings.detail)
+        val mapped = LocalToneMap.apply(styled.rgb, PORTRAIT_W, PORTRAIT_H, 1f, 1f, emptyList())
+        val diffusion = settings.method in setOf(Dither.Method.FLOYD_STEINBERG, Dither.Method.STUCKI, Dither.Method.ATKINSON)
+        val codes = Dither.dither(toBuffer(mapped), Frame.WIDTH, Frame.HEIGHT, settings.method, Palette.MEASURED, serpentine = diffusion)
+        val outline = toBuffer(IntArray(styled.outline.size) { if (styled.outline[it]) 1 else 0 })
+        for (i in codes.indices) if (outline[i] == 1) codes[i] = Ink.BLACK.code.toByte()
+        return codes
+    }
+
     /** Portrait (304 x 400) -> buffer order (400 x 304): buffer(x, y) = portrait(col = y, row = x). */
     fun toBuffer(portrait: IntArray): IntArray =
         IntArray(Frame.WIDTH * Frame.HEIGHT) { i -> portrait[(i % Frame.WIDTH) * PORTRAIT_W + i / Frame.WIDTH] }
@@ -68,7 +89,8 @@ object PhotoPipeline {
      * Fitted portrait photo + settings -> pixel codes in buffer order, ready for [Frame.packPixels].
      * [faces] (portrait coordinates) let the local tone map go easy on skin.
      */
-    fun render(fitted: IntArray, settings: Settings, faces: List<Face> = emptyList()): ByteArray {
+    fun render(fitted: IntArray, settings: Settings, faces: List<Face> = emptyList(), aiCartoon: IntArray? = null): ByteArray {
+        if (settings.effect != Effect.NONE) return renderCartoon(fitted, settings, aiCartoon)
         val adjusted = Adjust.apply(fitted, settings)
         val tone = settings.tone
         // The Detail setting scales how far the preset's gain goes beyond "keep detail as is".

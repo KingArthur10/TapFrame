@@ -183,6 +183,32 @@ class PhotoPipelineTest {
         ImageIO.write(sheet, "png", File(File("build/photos").apply { mkdirs() }, "real_tones.png"))
     }
 
+    /**
+     * Optional: with TAPFRAME_PHOTO (304x400 PNG) and TAPFRAME_AI (the AI model's 304x400 output),
+     * writes cartoon variants (simulated frame view above, ink maps below) to build/photos/real_cartoon.png.
+     */
+    @Test
+    fun exportRealPhotoCartoon() {
+        val photoPath = System.getenv("TAPFRAME_PHOTO") ?: return
+        fun load(path: String) = ImageIO.read(File(path)).let { img -> IntArray(pw * ph).also { img.getRGB(0, 0, pw, ph, it, 0, pw) }.map { it and 0xFFFFFF }.toIntArray() }
+        val photo = load(photoPath)
+        val ai = System.getenv("TAPFRAME_AI")?.let(::load)
+        val variants = listOf(
+            Settings(Dither.Method.NONE, effect = Effect.CARTOON),
+            Settings(Dither.Method.BLUE_NOISE, effect = Effect.CARTOON),
+        ) + if (ai == null) emptyList() else listOf(
+            Settings(Dither.Method.NONE, effect = Effect.AI_CARTOON),
+            Settings(Dither.Method.BLUE_NOISE, effect = Effect.AI_CARTOON),
+        )
+        val sheet = BufferedImage(pw * variants.size, ph * 2, BufferedImage.TYPE_INT_RGB)
+        variants.forEachIndexed { i, s ->
+            val codes = PhotoPipeline.render(photo, s, aiCartoon = ai)
+            sheet.setRGB(pw * i, 0, pw, ph, PhotoPipeline.simulatedPortrait(codes), 0, pw)
+            sheet.setRGB(pw * i, ph, pw, ph, Preview.portraitArgb(codes), 0, pw)
+        }
+        ImageIO.write(sheet, "png", File(File("build/photos").apply { mkdirs() }, "real_cartoon.png"))
+    }
+
     /** Portrait test scene: sky gradient, skin-tone patches, gray ramp, saturated color bars. */
     private fun syntheticPhoto(): IntArray {
         val skins = intArrayOf(0xF1C27D, 0xE0AC69, 0xC68642, 0x8D5524, 0xFFDBAC)

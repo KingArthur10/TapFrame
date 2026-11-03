@@ -71,7 +71,9 @@ class Exam(
     private fun nextStep(): Step {
         val rounds = Round.entries
         if (round >= rounds.size) return Step.Done(current)
-        val r = rounds[round]
+        var r = rounds[round]
+        // Tone mapping does not apply to cartoon effects.
+        if (r == Round.TONE && current.effect != dev.tapframe.render.Effect.NONE) { round++; r = rounds[round] }
         if (r == Round.STYLE) {
             val labels = ranking.mapIndexed { i, t -> if (i == 0) "${t.label} (most likely)" else t.label }
             return Step.StyleList(r.title, round + 1, rounds.size, ranking.map(profile), labels)
@@ -111,7 +113,8 @@ class Exam(
         val photo = type == ContentType.PEOPLE || type == ContentType.LANDSCAPE
         val unseen = Dither.Method.entries.filter { it !in type.candidates && !(photo && it == Dither.Method.NONE) }
         val methods = (unseen + type.candidates).filter { it != current.method && it !in challengedMethods }
-        val useTone = (challengeTone && tones.isNotEmpty()) || methods.isEmpty()
+        val cartoon = current.effect != dev.tapframe.render.Effect.NONE
+        val useTone = !cartoon && ((challengeTone && tones.isNotEmpty()) || methods.isEmpty())
         challengeTone = !challengeTone
         return if (useTone) tones.firstOrNull()?.also { challengedTones += it }?.let { current.copy(tone = it) }
         else methods.firstOrNull()?.also { challengedMethods += it }?.let { current.copy(method = it) }

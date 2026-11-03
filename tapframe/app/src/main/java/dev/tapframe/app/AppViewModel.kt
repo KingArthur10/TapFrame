@@ -16,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import dev.tapframe.exam.Exam
 import dev.tapframe.protocol.Frame
 import dev.tapframe.render.ContentType
+import dev.tapframe.render.Effect
 import dev.tapframe.render.Face
 import dev.tapframe.render.PhotoPipeline
 import dev.tapframe.render.Settings
@@ -56,6 +57,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var fitted: IntArray? = null
     private var fittedNearest: IntArray? = null
+    /** The crop at the AI model's input size, and the model's cartoon (computed on first use). */
+    private var aiInput: IntArray? = null
+    @Volatile private var aiCartoon: IntArray? = null
+    private val cartoonModel by lazy { CartoonModel(getApplication()) }
     private var faces: List<Face> = emptyList()
     var faceCount by mutableStateOf(0)
         private set
@@ -124,6 +129,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val argb = IntArray(bmp.width * bmp.height).also { bmp.getPixels(it, 0, bmp.width, 0, 0, bmp.width, bmp.height) }
                 fitted = PhotoPipeline.fitPortrait(argb, bmp.width, bmp.height, crop = crop)
                 fittedNearest = PhotoPipeline.fitPortrait(argb, bmp.width, bmp.height, nearest = true, crop = crop)
+                aiInput = PhotoPipeline.fit(argb, bmp.width, bmp.height, crop, CartoonModel.SIZE, CartoonModel.SIZE)
+                aiCartoon = null
                 val found = detectFaces(bmp)
                 faces = found.mapNotNull { (x, y, d) ->
                     val (px, py) = crop.toPortrait(x, y)
@@ -199,8 +206,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun codesFor(settings: Settings): ByteArray = codes.getOrPut(settings) {
-        if (settings.nearest) PhotoPipeline.render(fittedNearest!!, settings)
-        else PhotoPipeline.render(fitted!!, settings, faces)
+        when {
+            settings.effect == Effect.AI_CARTOON -> PhotoPipeline.render(fitted!!, settings, aiCartoon = aiCartoonImage())
+            settings.nearest -> PhotoPipeline.render(fittedNearest!!, settings)
+            else -> PhotoPipeline.render(fitted!!, settings, faces)
+        }
+    }
+
+    @Synchronized
+    private fun aiCartoonImage(): IntArray = aiCartoon ?: cartoonModel.cartoonize(aiInput!!).also { aiCartoon = it }
+
+    override fun onCleared() {
+        runCatching { cartoonModel.close() }
     }
 
     // ---- Sending -----------------------------------------------------------------------------
