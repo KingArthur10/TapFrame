@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Send
@@ -90,6 +91,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import dev.tapframe.ai.Catalog
 import dev.tapframe.app.AppViewModel
 import dev.tapframe.app.HistoryItem
 import dev.tapframe.app.Screen
@@ -114,6 +116,8 @@ fun TapFrameApp(
     nfcEnabled: () -> Boolean,
     onPickPhoto: () -> Unit,
     onOpenLab: () -> Unit,
+    onImportModels: () -> Unit,
+    onOpenUrl: (String) -> Unit,
 ) {
     val title = when (vm.screen) {
         Screen.HOME -> "TapFrame"
@@ -127,6 +131,7 @@ fun TapFrameApp(
         Screen.SETTINGS -> "Settings"
         Screen.CALIBRATE -> "Match preview to frame"
         Screen.ADVANCED -> "Edit manually"
+        Screen.MODELS -> "AI styles"
     }
     Scaffold(
         topBar = {
@@ -157,6 +162,7 @@ fun TapFrameApp(
                 Screen.SETTINGS -> SettingsScreen(vm, onOpenLab)
                 Screen.CALIBRATE -> CalibrationScreen(vm)
                 Screen.ADVANCED -> AdvancedScreen(vm)
+                Screen.MODELS -> ModelsScreen(vm, onImportModels, onOpenUrl)
             }
             vm.busyMessage?.let { Busy(it) }
         }
@@ -402,6 +408,7 @@ private fun caption(s: Settings, current: Settings?): String = when {
     s.detail != current.detail -> if (s.detail > current.detail) "More detail" else "Less detail"
     s.saturation != current.saturation -> if (s.saturation > current.saturation) "More color" else "Less color"
     s.keepHue != current.keepHue -> if (s.keepHue) "True hues" else "Bolder hues"
+    s.aiStyle != current.aiStyle -> "Other AI style"
     else -> "Current"
 }
 
@@ -450,6 +457,15 @@ private fun SettingsScreen(vm: AppViewModel, onOpenLab: () -> Unit) {
                 headlineContent = { Text("Compress images") },
                 supportingContent = { Text("Sends about 25% faster. Turn off if sending keeps failing.") },
                 trailingContent = { Switch(checked = vm.compressionEnabled, onCheckedChange = vm::setCompression) },
+            )
+            HorizontalDivider()
+            ListItem(
+                headlineContent = { Text("AI styles") },
+                supportingContent = { Text(
+                    if (vm.aiStyles.isEmpty()) "Download extra cartoon and painting styles (AnimeGAN, DCT-Net, SD-Turbo)."
+                    else "${vm.aiStyles.size} downloaded style${if (vm.aiStyles.size > 1) "s" else ""} ready. Tap to manage.",
+                ) },
+                modifier = Modifier.clickable(onClick = vm::openModels),
             )
             HorizontalDivider()
             ListItem(
@@ -538,9 +554,17 @@ private fun AdvancedScreen(vm: AppViewModel) {
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Column(Modifier.weight(1.1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-            ChipRow("Style", listOf("Photo" to Effect.NONE, "Cartoon" to Effect.CARTOON, "Cartoon (AI)" to Effect.AI_CARTOON), s.effect) {
-                set(s.copy(effect = it))
-            }
+            val styles = listOf(
+                "Photo" to (Effect.NONE to Settings.WHITEBOX),
+                "Cartoon" to (Effect.CARTOON to Settings.WHITEBOX),
+                "Cartoon (AI)" to (Effect.AI_CARTOON to Settings.WHITEBOX),
+            ) + vm.aiStyles.map { "AI: ${it.label}" to (Effect.AI_CARTOON to it.id) }
+            val selected = s.effect to (if (s.effect == Effect.AI_CARTOON) s.aiStyle else Settings.WHITEBOX)
+            ChipRow("Style", styles, selected) { (effect, ai) -> set(s.copy(effect = effect, aiStyle = ai)) }
+            if (vm.aiStyles.isEmpty()) Text(
+                "More AI styles can be downloaded in Settings → AI styles.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (photo) ChipRow("Tone mapping", ToneMap.entries.map { it.label to it }, s.tone) { set(s.copy(tone = it)) }
             ChipRow("Dithering", Dither.Method.entries.map { it.label to it }, s.method) { set(s.copy(method = it)) }
             LabeledSlider("Brightness", s.brightness, Settings.BRIGHTNESS, "%+.2f") { set(s.copy(brightness = it)) }
@@ -605,6 +629,80 @@ private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange:
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
+
+// ---- Downloadable AI styles -------------------------------------------------------------------
+
+/**
+ * Model manager. TapFrame has no internet permission, so "Download" opens the official file in the
+ * browser; "Import" copies picked files in, keeping only those whose SHA-256 matches the catalog.
+ */
+@Composable
+private fun ModelsScreen(vm: AppViewModel, onImport: () -> Unit, onOpenUrl: (String) -> Unit) {
+    var confirmDelete by remember { mutableStateOf<Catalog.Pack?>(null) }
+    var refresh by remember { mutableStateOf(0) }
+    LaunchedEffect(vm.aiStyles) { refresh++ }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Text(
+                "TapFrame can't use the internet. Tap Download to get a file from its official source in your browser, " +
+                    "then Import to add the downloaded files. Pick several at once, in any order: each file is checked " +
+                    "against its published fingerprint, and anything else is rejected. Afterwards you can delete the " +
+                    "copies in your Downloads folder.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onImport, enabled = !vm.importing, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.FileOpen, null); Spacer(Modifier.width(8.dp)); Text("Import downloaded files")
+            }
+            if (vm.importing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+            vm.importStatus?.let { Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall) }
+        }
+        for (pack in Catalog.packs) item(key = pack.id) {
+            val installed = remember(refresh, pack.id) { vm.models.installedCount(pack) }
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(pack.title, style = MaterialTheme.typography.titleMedium)
+                    Text(pack.summary, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "${megabytes(pack.size)} · $installed of ${pack.files.size} files imported",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    val ready = vm.aiStyles.filter { it.pack == pack }
+                    if (ready.isNotEmpty()) Text("Ready: " + ready.joinToString { it.label }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(pack.license, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    for (file in pack.files) {
+                        val has = remember(refresh, file.name) { vm.models.has(file) }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(file.name, style = MaterialTheme.typography.bodyMedium)
+                                Text(megabytes(file.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (has) Icon(Icons.Filled.CheckCircle, "Imported", tint = MaterialTheme.colorScheme.primary)
+                            else TextButton(onClick = { onOpenUrl(file.url) }) { Text("Download") }
+                        }
+                    }
+                    if (installed > 0) TextButton(onClick = { confirmDelete = pack }) {
+                        Icon(Icons.Filled.Delete, null); Spacer(Modifier.width(4.dp)); Text("Delete imported files")
+                    }
+                }
+            }
+        }
+    }
+    confirmDelete?.let { pack ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text("Delete ${pack.title}?") },
+            text = { Text("Frees ${megabytes(vm.models.used(pack))}. You can import the files again later.") },
+            confirmButton = { TextButton(onClick = { vm.deletePack(pack); confirmDelete = null }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+private fun megabytes(bytes: Long): String =
+    if (bytes >= 1_000_000_000) "%.1f GB".format(bytes / 1e9) else "%.0f MB".format(maxOf(1.0, bytes / 1e6))
 
 // ---- Preview calibration -----------------------------------------------------------------------
 

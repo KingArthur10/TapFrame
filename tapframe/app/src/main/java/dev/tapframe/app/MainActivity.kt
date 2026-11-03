@@ -36,6 +36,11 @@ class MainActivity : ComponentActivity() {
         if (uri != null) vm.onPhotoPicked(uri)
     }
 
+    /** Model files the user downloaded in the browser (no storage permission needed). */
+    private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        vm.importModels(uris)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -53,6 +58,11 @@ class MainActivity : ComponentActivity() {
                     nfcEnabled = { nfc?.isEnabled == true },
                     onPickPhoto = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                     onOpenLab = { startActivity(android.content.Intent(this, dev.tapframe.LabActivity::class.java)) },
+                    onImportModels = { modelPicker.launch(arrayOf("*/*")) },
+                    // The browser does the downloading; TapFrame itself has no network access.
+                    onOpenUrl = { url ->
+                        runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+                    },
                 )
             }
         }

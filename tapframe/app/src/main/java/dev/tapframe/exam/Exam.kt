@@ -20,7 +20,17 @@ class Exam(
     /** Starting settings per content type (defaults or the user's saved profile). */
     private val profile: (ContentType) -> Settings,
     private val random: Random = Random.Default,
+    /** Downloaded AI styles (id, label): each is listed after the bundled AI cartoon. */
+    private val aiStyles: List<Pair<String, String>> = emptyList(),
 ) {
+    /** The style list's entries: one per content type, plus one per downloaded AI style. */
+    private val entries: List<Triple<ContentType, Settings, String>> = ranking.flatMap { t ->
+        val base = profile(t)
+        if (t == ContentType.CARTOON_AI) listOf(Triple(t, base.copy(aiStyle = Settings.WHITEBOX), t.label)) +
+            aiStyles.map { (id, label) -> Triple(t, base.copy(aiStyle = id), "AI style: $label") }
+        else listOf(Triple(t, base, t.label))
+    }
+
 
     sealed class Step {
         /** All photo styles in a scrolling list, most likely first; [labels] name them. */
@@ -61,7 +71,7 @@ class Exam(
     /** The user tapped option [index] of the current quad. */
     fun choose(index: Int) {
         current = when (val step = step()) {
-            is Step.StyleList -> { type = ranking[index]; step.options[index] }
+            is Step.StyleList -> { type = entries[index].first; step.options[index] }
             is Step.Quad -> step.options[index]
             else -> return
         }
@@ -76,8 +86,8 @@ class Exam(
         // Tone mapping does not apply to cartoon effects.
         if (r == Round.TONE && current.effect != dev.tapframe.render.Effect.NONE) { round++; r = rounds[round] }
         if (r == Round.STYLE) {
-            val labels = ranking.mapIndexed { i, t -> if (i == 0) "${t.label} (most likely)" else t.label }
-            return Step.StyleList(r.title, round + 1, rounds.size, ranking.map(profile), labels)
+            val labels = entries.mapIndexed { i, e -> if (i == 0) "${e.third} (most likely)" else e.third }
+            return Step.StyleList(r.title, round + 1, rounds.size, entries.map { it.second }, labels)
         }
         val options = when (r) {
             Round.STYLE -> error("handled above")

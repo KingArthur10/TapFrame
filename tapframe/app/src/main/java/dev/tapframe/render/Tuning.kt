@@ -52,8 +52,12 @@ data class Settings(
     val shadows: Float = 0f,
     /** Rotates every hue by this many degrees. Range [HUE]. */
     val hue: Float = 0f,
+    /** With [Effect.AI_CARTOON]: which model, [WHITEBOX] (bundled) or a downloaded style's id. */
+    val aiStyle: String = WHITEBOX,
 ) {
     companion object {
+        /** The bundled White-box Cartoonization model. */
+        const val WHITEBOX = "whitebox"
         val BRIGHTNESS = -0.3f..0.3f
         val CONTRAST = -0.5f..1.5f
         val SATURATION = 0.6f..2.0f

@@ -13,6 +13,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.provider.OpenableColumns
+import dev.tapframe.ai.Catalog
+import dev.tapframe.ai.ModelStore
+import dev.tapframe.ai.Stylizer
 import dev.tapframe.exam.Exam
 import dev.tapframe.protocol.Frame
 import dev.tapframe.render.ContentType
@@ -30,7 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Screens of the photo flow. */
-enum class Screen { HOME, CROP, EXAM, RESULT, SETTINGS, CALIBRATE, ADVANCED }
+enum class Screen { HOME, CROP, EXAM, RESULT, SETTINGS, CALIBRATE, ADVANCED, MODELS }
 
 /**
  * App state: the chosen photo (rotated source, crop, faces, style ranking), the tuning exam,
@@ -61,10 +65,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private var fitted: IntArray? = null
     private var fittedNearest: IntArray? = null
-    /** The crop at the AI model's input size, and the model's cartoon (computed on first use). */
+    /** The crop at the bundled AI model's input size, and at the downloaded styles' source size. */
     private var aiInput: IntArray? = null
-    @Volatile private var aiCartoon: IntArray? = null
+    private var aiSource: IntArray? = null
+    /** AI cartoons of the current photo by style id (computed on first use). */
+    private val aiCartoons = ConcurrentHashMap<String, IntArray>()
     private val cartoonModel by lazy { CartoonModel(getApplication()) }
+
+    // ---- Downloadable AI styles ----------------------------------------------------------------
+
+    val models = ModelStore(app.filesDir)
+    /** Downloaded styles whose files are all imported. */
+    var aiStyles by mutableStateOf(models.readyStyles())
+        private set
+    /** Progress or result of the last import, for the AI styles screen. */
+    var importStatus by mutableStateOf<String?>(null)
+        private set
+    var importing by mutableStateOf(false)
+        private set
+    private val stylizers = HashMap<String, Stylizer>()
+
+    fun openModels() { screen = Screen.MODELS }
+
+    /** Imports picked files (blocking work on IO); unknown files are reported, not kept. */
+    fun importModels(uris: List<Uri>) {
+        if (uris.isEmpty() || importing) return
+        importing = true
+        viewModelScope.launch {
+            val resolver = getApplication<Application>().contentResolver
+            val results = withContext(Dispatchers.IO) {
+                uris.mapIndexed { i, uri ->
+                    var name = uri.lastPathSegment ?: "file"; var size = -1L
+                    resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) { name = c.getString(0) ?: name; size = c.getLong(1) }
+                    }
+                    models.import(name, size, { resolver.openInputStream(uri) ?: error("cannot open") }) { f ->
+                        importStatus = "Importing $name (${i + 1} of ${uris.size}) · ${(f * 100).toInt()}%"
+                    }
+                }
+            }
+            importing = false
+            importStatus = results.joinToString("\n") {
+                when (it) {
+                    is ModelStore.Imported.Added -> "Added ${it.file.name}"
+                    is ModelStore.Imported.AlreadyThere -> "Already imported: ${it.file.name}"
+                    is ModelStore.Imported.Unknown -> "Not a known model file (not kept): ${it.name}"
+                    is ModelStore.Imported.Failed -> "Couldn't import ${it.name}: ${it.reason}"
+                }
+            }
+            refreshStyles()
+        }
+    }
+
+    fun deletePack(pack: Catalog.Pack) {
+        synchronized(stylizers) {
+            pack.styles.forEach { s -> stylizers.remove(s.id)?.close(); aiCartoons.remove(s.id) }
+        }
+        models.delete(pack)
+        refreshStyles()
+    }
+
+    private fun refreshStyles() {
+        aiStyles = models.readyStyles()
+        // The style list depends on the installed styles.
+        if (fitted != null) restartExam()
+    }
+
+    fun aiStyleLabel(id: String): String = if (id == Settings.WHITEBOX) "Cartoon (AI)" else Catalog.style(id)?.label ?: id
     private var faces: List<Face> = emptyList()
     var faceCount by mutableStateOf(0)
         private set
@@ -130,7 +197,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         screen = when (screen) {
             Screen.HOME -> return false
             Screen.CROP, Screen.SETTINGS -> Screen.HOME
-            Screen.CALIBRATE -> Screen.SETTINGS
+            Screen.CALIBRATE, Screen.MODELS -> Screen.SETTINGS
             Screen.ADVANCED -> advancedReturn
             Screen.EXAM -> Screen.CROP
             Screen.RESULT -> Screen.EXAM.also { restartExam() }
@@ -181,7 +248,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 fitted = PhotoPipeline.fitPortrait(argb, bmp.width, bmp.height, crop = crop)
                 fittedNearest = PhotoPipeline.fitPortrait(argb, bmp.width, bmp.height, nearest = true, crop = crop)
                 aiInput = PhotoPipeline.fit(argb, bmp.width, bmp.height, crop, CartoonModel.SIZE, CartoonModel.SIZE)
-                aiCartoon = null
+                aiSource = PhotoPipeline.fit(argb, bmp.width, bmp.height, crop, Stylizer.SOURCE_W, Stylizer.SOURCE_H)
+                aiCartoons.clear()
                 val found = detectFaces(bmp)
                 faces = found.mapNotNull { (x, y, d) ->
                     val (px, py) = crop.toPortrait(x, y)
@@ -216,7 +284,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restartExam() {
         codes.clear(); previews.clear()
-        val e = Exam(ranking, profiles::get)
+        val e = Exam(ranking, profiles::get, aiStyles = aiStyles.map { it.id to it.label })
         exam = e
         step = e.step()
     }
@@ -262,16 +330,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Renders [settings] for the current photo (uncached). */
     private fun renderCodes(settings: Settings): ByteArray =
         when {
-            settings.effect == Effect.AI_CARTOON -> PhotoPipeline.render(fitted!!, settings, aiCartoon = aiCartoonImage())
+            settings.effect == Effect.AI_CARTOON -> PhotoPipeline.render(fitted!!, settings, aiCartoon = aiCartoonImage(settings.aiStyle))
             settings.nearest -> PhotoPipeline.render(fittedNearest!!, settings)
             else -> PhotoPipeline.render(fitted!!, settings, faces)
         }
 
-    @Synchronized
-    private fun aiCartoonImage(): IntArray = aiCartoon ?: cartoonModel.cartoonize(aiInput!!).also { aiCartoon = it }
+    /** The AI cartoon of the current photo in [styleId] (bundled model if that style isn't installed). */
+    private fun aiCartoonImage(styleId: String): IntArray {
+        aiCartoons[styleId]?.let { return it }
+        // One model at a time: they are memory-hungry, and SD-Turbo takes many seconds.
+        synchronized(stylizers) {
+            aiCartoons[styleId]?.let { return it }
+            val style = Catalog.style(styleId)?.takeIf(models::ready)
+            val image = if (style == null) cartoonModel.cartoonize(aiInput!!) else {
+                val stylizer = stylizers.getOrPut(style.id) { Stylizer.create(style, models) }
+                val big = stylizer.stylize(aiSource!!, faces)
+                PhotoPipeline.fit(big, Stylizer.SOURCE_W, Stylizer.SOURCE_H, PhotoPipeline.Crop(0f, 0f, Stylizer.SOURCE_W.toFloat(), Stylizer.SOURCE_H.toFloat()), PhotoPipeline.PORTRAIT_W, PhotoPipeline.PORTRAIT_H)
+            }
+            return image.also { aiCartoons[styleId] = it }
+        }
+    }
 
     override fun onCleared() {
         runCatching { cartoonModel.close() }
+        synchronized(stylizers) { stylizers.values.forEach { runCatching { it.close() } }; stylizers.clear() }
     }
 
     // ---- Advanced editing --------------------------------------------------------------------
@@ -413,6 +495,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (s.highlights != 0f) append(", highlights %+.2f".format(s.highlights))
             if (s.shadows != 0f) append(", shadows %+.2f".format(s.shadows))
             if (s.hue != 0f) append(", hue %+.0f°".format(s.hue))
+            if (s.effect == Effect.AI_CARTOON) append(", ${aiStyleLabel(s.aiStyle)}")
             if (s.keepHue) append(", true hues")
         }
 }

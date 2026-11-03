@@ -69,5 +69,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     // On-device inference for the AI cartoon style (model bundled in assets; no network).
     implementation("com.google.ai.edge.litert:litert:1.4.2")
+    // Downloadable AI styles (AnimeGANv3, DCT-Net, SD-Turbo) run as ONNX; the user imports the files.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
     testImplementation("junit:junit:4.13.2")
 }

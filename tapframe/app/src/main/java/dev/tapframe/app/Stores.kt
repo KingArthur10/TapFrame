@@ -36,12 +36,13 @@ class Profiles(context: Context) {
                 highlights = f.getOrNull(8)?.toFloat() ?: 0f,
                 shadows = f.getOrNull(9)?.toFloat() ?: 0f,
                 hue = f.getOrNull(10)?.toFloat() ?: 0f,
+                aiStyle = f.getOrNull(11) ?: fallback.aiStyle,
             )
         }.getOrDefault(fallback)
     }
 
     private fun save(key: String, s: Settings) {
-        prefs.edit().putString(key, "${s.tone.name},${s.method.name},${s.brightness},${s.contrast},${s.saturation},${s.detail},${s.nearest},${s.keepHue},${s.highlights},${s.shadows},${s.hue}").apply()
+        prefs.edit().putString(key, "${s.tone.name},${s.method.name},${s.brightness},${s.contrast},${s.saturation},${s.detail},${s.nearest},${s.keepHue},${s.highlights},${s.shadows},${s.hue},${s.aiStyle}").apply()
     }
 
     fun reset() = prefs.edit().clear().apply()
