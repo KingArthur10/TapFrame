@@ -64,3 +64,20 @@ F0 D3 <section> <last> <Lc> <chunk> <block> <data…>
 - `Lc`: `len(data) + 2` (so `FC` for a full 250-byte block)
 - `chunk`: 2000-byte chunk index within the section
 - `block`: index of this 250-byte block within the compressed chunk
+
+## Verified with our own app (2026-11-02, tapframe test app)
+
+- Replaying Einky's captured APDUs works: upload of 187 blocks takes ~7.4 s, the refresh command
+  answers `9000` after ~1.7 s, and F0DE polling reports done after ~17 s.
+- The frame accepts **literal-only LZO** (`00 <zero-extended length> <raw bytes> 11 00 00`), so no
+  real compressor is required. Cost: 272 blocks / ~10.3 s upload instead of ~187 / ~7.4 s.
+- One run lost the field ~1 s into the refresh command (`IOException: Transceive failed`); the
+  panel draws the most power then. Holding the phone still matters most during the refresh.
+- Orientation: the panel displays the buffer **transposed** (not rotated). Seen with the card in
+  portrait (logo at the bottom), buffer x runs top→bottom and buffer y runs left→right, so an
+  upright 304×400 portrait image maps as `buffer(x, y) = image(col = y, row = x)`.
+- Pixel codes: only the low 3 bits matter. 4 renders as blue (same as 5), 7 as green (same as 6),
+  and 8–F repeat 0–7. No extra inks.
+- Refresh can answer `68CA` (seen twice, ~0.8 s after the refresh command, on first taps). Einky's
+  fallback `F0 D4 85 00 00` then returned `9000` without polling (no confirmed refresh) or `68CB`
+  after 30 s. Our app treats any non-success answer as a failure and asks for a re-tap.

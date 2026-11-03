@@ -185,3 +185,23 @@ Fitted on all seven RAW photos; leave-one-out block errors (plain → simulated)
 0.057 → 0.028, 0.096 → 0.034; patterns T1 0.077 → 0.075, T4a 0.091 → 0.076, T4b 0.067 → 0.061,
 T8 0.064 → 0.052. Fitting on photos alone gave a stronger desaturation (c = 0.8) that made the
 regular checker/stripe patterns worse, so all seven are used.
+
+## Einky comparison and local tone mapping (2026-11-02)
+
+Einky's upload for photo PXL_20260927_210136951 was captured and decoded (`captures/einky2/`,
+`scripts/einky_analysis.py`, `scripts/dither_lab.py`):
+- Crop: plain center crop at full height (same as ours).
+- Ink usage K18 W37 Y12 R24 B6 G3 (ours, faithful mapping: K10 W27 Y18 R23 B19 G2). Its usage pattern
+  matches Floyd–Steinberg in plain sRGB against idealized pure primaries; the closest pre-dither curve
+  found was brightness +0.04, contrast 0.6, saturation ×1.4 (K15 W36 Y12 R21 B11 G4).
+- Tone curve (original L → output L in measured inks): 0.15→0.41 (black ink), 0.25→0.45, 0.35→0.51,
+  0.45→0.60, 0.55→0.70, 0.65→0.81, 0.75→0.89, 0.85→0.93. Deep shadows stay black, mid-tones lifted.
+- Correction: an early "ours keeps far less real detail (0.34 vs 0.82)" result was a 3–4 px crop
+  misregistration; on the identical crop ours scores 0.92.
+
+Resulting pipeline (`LocalToneMap.kt`): guided-filter base/detail split on OKLab L; base through
+Einky's measured curve into the panel range; detail added back with a gain gated by local texture and
+reduced on facial skin (eye band kept); shadows aimed at the black ink's real (violet) color.
+Presets: Natural (gain 1), Balanced (base ×0.85, gain 1.8), Strong local (×0.7, 2.6), Vivid (Einky-style).
+Open: our simulated preview makes Einky/Vivid look pale; needs a RAW photo of Einky's output on the
+frame to check.
