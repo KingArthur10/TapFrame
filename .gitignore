@@ -1,0 +1,6 @@
+# Large/third-party/personal material stays out of version control
+tools/
+apk/
+work/
+captures/
+tapframe/app/src/main/assets/replay_capture1.txt
