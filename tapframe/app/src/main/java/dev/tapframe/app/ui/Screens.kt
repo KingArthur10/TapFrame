@@ -253,7 +253,8 @@ private fun CropScreen(vm: AppViewModel) {
                     // Fill the frame, apply zoom, keep the image covering the frame.
                     val fill = maxOf(size.width / bmp.width, size.height / bmp.height) * zoom
                     val w = bmp.width * fill; val h = bmp.height * fill
-                    val maxX = (w - size.width) / 2; val maxY = (h - size.height) / 2
+                    // Rounding can make these slightly negative when the photo exactly fits.
+                    val maxX = ((w - size.width) / 2).coerceAtLeast(0f); val maxY = ((h - size.height) / 2).coerceAtLeast(0f)
                     offset = Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
                     val left = (size.width - w) / 2 + offset.x
                     val top = (size.height - h) / 2 + offset.y
