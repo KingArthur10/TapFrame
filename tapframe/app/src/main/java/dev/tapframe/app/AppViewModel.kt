@@ -193,7 +193,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             faceCount = faces.size
             busyMessage = null
             restartExam()
-            if (advanced) openAdvanced(profiles.get(ranking.first()), from = Screen.CROP) else screen = Screen.EXAM
+            if (advanced) openAdvanced(profiles.manual(), from = Screen.CROP) else screen = Screen.EXAM
         }
     }
 
@@ -327,12 +327,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         advancedRequests.value = s
     }
 
-    /** Back to the style's defaults (not the saved profile). */
-    fun resetAdvanced() = updateAdvanced(currentType.defaults)
+    /**
+     * Switches from guided tuning to manual editing at any point, keeping what was chosen so far
+     * (from the style list, before anything was chosen: manual editing's own starting point).
+     */
+    fun editManually() {
+        val start = when (val s = step) {
+            is Exam.Step.StyleList -> profiles.manual()
+            is Exam.Step.Done -> s.result
+            else -> exam?.current ?: profiles.manual()
+        }
+        openAdvanced(start)
+    }
 
-    /** Saves the edited settings as the starting point for the current photo style. */
+    /** Back to manual editing's built-in defaults (Vivid, Atkinson). */
+    fun resetAdvanced() = updateAdvanced(Profiles.MANUAL_DEFAULT)
+
+    /** Saves the edited settings as where manual editing starts. */
     fun saveAdvancedAsDefault() {
-        advanced?.let { profiles.put(currentType, it) }
+        advanced?.let(profiles::putManual)
     }
 
     fun sendAdvanced() {

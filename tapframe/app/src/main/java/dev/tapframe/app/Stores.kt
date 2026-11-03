@@ -15,26 +15,43 @@ import org.json.JSONObject
 class Profiles(context: Context) {
     private val prefs = context.getSharedPreferences("profiles", Context.MODE_PRIVATE)
 
-    fun get(type: ContentType): Settings {
-        val saved = prefs.getString(type.name, null) ?: return type.defaults
+    fun get(type: ContentType): Settings = load(type.name, type.defaults)
+
+    fun put(type: ContentType, s: Settings) = save(type.name, s)
+
+    /** Where manual editing starts: the user's saved choice, or [MANUAL_DEFAULT]. */
+    fun manual(): Settings = load(MANUAL, MANUAL_DEFAULT)
+
+    fun putManual(s: Settings) = save(MANUAL, s)
+
+    /** Saved settings under [key]; [fallback] if none (its effect is kept, it isn't stored). */
+    private fun load(key: String, fallback: Settings): Settings {
+        val saved = prefs.getString(key, null) ?: return fallback
         return runCatching {
             val f = saved.split(",")
             Settings(
                 Dither.Method.valueOf(f[1]), ToneMap.valueOf(f[0]), f[2].toFloat(), f[3].toFloat(), f[4].toFloat(), f[5].toFloat(), f[6].toBoolean(),
-                effect = type.defaults.effect,
-                keepHue = f.getOrNull(7)?.toBoolean() ?: type.defaults.keepHue,
+                effect = fallback.effect,
+                keepHue = f.getOrNull(7)?.toBoolean() ?: fallback.keepHue,
                 highlights = f.getOrNull(8)?.toFloat() ?: 0f,
                 shadows = f.getOrNull(9)?.toFloat() ?: 0f,
                 hue = f.getOrNull(10)?.toFloat() ?: 0f,
             )
-        }.getOrDefault(type.defaults)
+        }.getOrDefault(fallback)
     }
 
-    fun put(type: ContentType, s: Settings) {
-        prefs.edit().putString(type.name, "${s.tone.name},${s.method.name},${s.brightness},${s.contrast},${s.saturation},${s.detail},${s.nearest},${s.keepHue},${s.highlights},${s.shadows},${s.hue}").apply()
+    private fun save(key: String, s: Settings) {
+        prefs.edit().putString(key, "${s.tone.name},${s.method.name},${s.brightness},${s.contrast},${s.saturation},${s.detail},${s.nearest},${s.keepHue},${s.highlights},${s.shadows},${s.hue}").apply()
     }
 
     fun reset() = prefs.edit().clear().apply()
+
+    companion object {
+        private const val MANUAL = "MANUAL"
+
+        /** Manual editing's starting point until the user saves their own. */
+        val MANUAL_DEFAULT = Settings(Dither.Method.ATKINSON, ToneMap.VIVID)
+    }
 }
 
 /** A previously sent image: the exact pixel codes plus a preview, so it can be resent instantly. */

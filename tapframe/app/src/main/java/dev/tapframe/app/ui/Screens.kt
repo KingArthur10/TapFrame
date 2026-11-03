@@ -141,6 +141,9 @@ fun TapFrameApp(
                     if (vm.screen == Screen.HOME) IconButton(onClick = vm::openSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
+                    if (vm.screen == Screen.EXAM || vm.screen == Screen.RESULT) IconButton(onClick = vm::editManually) {
+                        Icon(Icons.Filled.Tune, contentDescription = "Edit manually")
+                    }
                 },
             )
         },
@@ -323,8 +326,13 @@ private fun StyleList(vm: AppViewModel, step: Exam.Step.StyleList) {
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(8.dp))
-            FilledTonalButton(onClick = vm::quickSend, Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("Quick send: ${step.labels.first().substringBefore(" (")}")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FilledTonalButton(onClick = vm::quickSend, Modifier.weight(1f)) {
+                    Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("Quick send")
+                }
+                FilledTonalButton(onClick = vm::editManually, Modifier.weight(1f)) {
+                    Icon(Icons.Filled.Tune, null); Spacer(Modifier.width(8.dp)); Text("Edit manually")
+                }
             }
         }
         itemsIndexed(step.options) { i, option ->
@@ -371,7 +379,7 @@ private fun QuadView(vm: AppViewModel, step: Exam.Step.Quad) {
             OutlinedButton(onClick = vm::finishEarly, Modifier.weight(1f)) { Text("Keep current") }
             Button(onClick = vm::sendCurrent, Modifier.weight(1f)) { Text("Send current") }
         }
-        FilledTonalButton(onClick = { vm.exam?.current?.let(vm::openAdvanced) }, Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        FilledTonalButton(onClick = vm::editManually, Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Icon(Icons.Filled.Tune, null); Spacer(Modifier.width(8.dp)); Text("Edit manually from here")
         }
     }
@@ -425,7 +433,7 @@ private fun ResultScreen(vm: AppViewModel) {
             }
         }
         Spacer(Modifier.height(8.dp))
-        FilledTonalButton(onClick = { vm.openAdvanced(result) }, Modifier.fillMaxWidth()) {
+        FilledTonalButton(onClick = vm::editManually, Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Tune, null); Spacer(Modifier.width(8.dp)); Text("Fine-tune manually")
         }
     }
@@ -556,7 +564,7 @@ private fun AdvancedScreen(vm: AppViewModel) {
                 }
             }
             Text(
-                "Save as default makes these the starting point for ${vm.currentType.label.lowercase()} photos.",
+                "Save as default makes these where manual editing starts next time.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(8.dp))
