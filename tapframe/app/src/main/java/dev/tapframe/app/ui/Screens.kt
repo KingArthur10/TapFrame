@@ -27,12 +27,15 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -52,6 +56,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.OutlinedButton
@@ -91,7 +96,10 @@ import dev.tapframe.app.Screen
 import dev.tapframe.app.SendState
 import dev.tapframe.exam.Exam
 import dev.tapframe.render.PhotoPipeline
+import dev.tapframe.render.Dither
+import dev.tapframe.render.Effect
 import dev.tapframe.render.PreviewLook
+import dev.tapframe.render.ToneMap
 import dev.tapframe.render.Settings
 import java.text.DateFormat
 import java.util.Date
@@ -118,6 +126,7 @@ fun TapFrameApp(
         Screen.RESULT -> "Ready to send"
         Screen.SETTINGS -> "Settings"
         Screen.CALIBRATE -> "Match preview to frame"
+        Screen.ADVANCED -> "Edit manually"
     }
     Scaffold(
         topBar = {
@@ -144,6 +153,7 @@ fun TapFrameApp(
                 Screen.RESULT -> ResultScreen(vm)
                 Screen.SETTINGS -> SettingsScreen(vm, onOpenLab)
                 Screen.CALIBRATE -> CalibrationScreen(vm)
+                Screen.ADVANCED -> AdvancedScreen(vm)
             }
             vm.busyMessage?.let { Busy(it) }
         }
@@ -270,12 +280,24 @@ private fun CropScreen(vm: AppViewModel) {
             }
         }
         Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = vm::rotate, Modifier.weight(1f)) {
-                Icon(Icons.Filled.RotateRight, null); Spacer(Modifier.width(6.dp)); Text("Rotate")
-            }
-            Button(onClick = { vm.confirmCrop(crop) }, Modifier.weight(1f)) { Text("Next") }
+        OutlinedButton(onClick = vm::rotate, Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.RotateRight, null); Spacer(Modifier.width(6.dp)); Text("Rotate")
         }
+        Spacer(Modifier.height(8.dp))
+        // Two equal ways forward: guided (pick from previews) or manual (sliders).
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = { vm.confirmCrop(crop) }, Modifier.weight(1f).height(56.dp)) {
+                Icon(Icons.Filled.AutoAwesome, null); Spacer(Modifier.width(8.dp)); Text("Guided")
+            }
+            FilledTonalButton(onClick = { vm.confirmCrop(crop, advanced = true) }, Modifier.weight(1f).height(56.dp)) {
+                Icon(Icons.Filled.Tune, null); Spacer(Modifier.width(8.dp)); Text("Edit manually")
+            }
+        }
+        Text(
+            "Guided: pick the best of four previews, round by round. Manual: set every option yourself with sliders.",
+            Modifier.padding(top = 6.dp), textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -349,6 +371,9 @@ private fun QuadView(vm: AppViewModel, step: Exam.Step.Quad) {
             OutlinedButton(onClick = vm::finishEarly, Modifier.weight(1f)) { Text("Keep current") }
             Button(onClick = vm::sendCurrent, Modifier.weight(1f)) { Text("Send current") }
         }
+        FilledTonalButton(onClick = { vm.exam?.current?.let(vm::openAdvanced) }, Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Icon(Icons.Filled.Tune, null); Spacer(Modifier.width(8.dp)); Text("Edit manually from here")
+        }
     }
     enlarged?.let { s ->
         Dialog(onDismissRequest = { enlarged = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -398,6 +423,10 @@ private fun ResultScreen(vm: AppViewModel) {
             Button(onClick = vm::sendCurrent, Modifier.weight(1f)) {
                 Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("Send to frame")
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        FilledTonalButton(onClick = { vm.openAdvanced(result) }, Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Tune, null); Spacer(Modifier.width(8.dp)); Text("Fine-tune manually")
         }
     }
 }
@@ -461,6 +490,112 @@ private fun SettingsScreen(vm: AppViewModel, onOpenLab: () -> Unit) {
         confirmButton = { TextButton(onClick = { vm.resetProfiles(); confirmReset = false }) { Text("Reset") } },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } },
     )
+}
+
+// ---- Advanced editing ------------------------------------------------------------------------
+
+/**
+ * Manual editor: every setting as a chip row or slider, with the frame preview re-rendered as you
+ * drag (the newest settings win; a small spinner shows while a render is catching up). Touch and
+ * hold the preview to see the photo before processing.
+ */
+@Composable
+private fun AdvancedScreen(vm: AppViewModel) {
+    val s = vm.advanced ?: return
+    val set = vm::updateAdvanced
+    var showOriginal by remember { mutableStateOf(false) }
+    val original = remember(vm.source) { vm.originalPreview }
+    var savedNote by remember { mutableStateOf(false) }
+    val photo = s.effect == Effect.NONE
+    Column(Modifier.fillMaxSize()) {
+        Box(
+            Modifier.fillMaxWidth().weight(0.9f).padding(horizontal = 16.dp, vertical = 8.dp)
+                .pointerInput(Unit) { detectTapGestures(onPress = { showOriginal = true; tryAwaitRelease(); showOriginal = false }) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.fillMaxSize().aspectRatio(CARD_ASPECT, matchHeightConstraintsFirst = true).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                val bmp = if (showOriginal) original else vm.advancedPreview
+                if (bmp != null) Picture(bmp, Modifier.fillMaxSize()) else CircularProgressIndicator(Modifier.size(24.dp))
+                if (vm.advancedRendering && !showOriginal && bmp != null)
+                    CircularProgressIndicator(Modifier.align(Alignment.TopEnd).padding(6.dp).size(18.dp), strokeWidth = 2.dp)
+                if (showOriginal) Text(
+                    "Original", Modifier.align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.6f)).padding(horizontal = 8.dp, vertical = 2.dp),
+                    color = Color.White, style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+        Text(
+            "Touch and hold the picture to compare with the original.",
+            Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Column(Modifier.weight(1.1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            ChipRow("Style", listOf("Photo" to Effect.NONE, "Cartoon" to Effect.CARTOON, "Cartoon (AI)" to Effect.AI_CARTOON), s.effect) {
+                set(s.copy(effect = it))
+            }
+            if (photo) ChipRow("Tone mapping", ToneMap.entries.map { it.label to it }, s.tone) { set(s.copy(tone = it)) }
+            ChipRow("Dithering", Dither.Method.entries.map { it.label to it }, s.method) { set(s.copy(method = it)) }
+            LabeledSlider("Brightness", s.brightness, Settings.BRIGHTNESS, "%+.2f") { set(s.copy(brightness = it)) }
+            LabeledSlider("Contrast", s.contrast, Settings.CONTRAST, "%+.2f") { set(s.copy(contrast = it)) }
+            LabeledSlider("Highlights", s.highlights, Settings.HIGHLIGHTS, "%+.2f") { set(s.copy(highlights = it)) }
+            LabeledSlider("Shadows", s.shadows, Settings.SHADOWS, "%+.2f") { set(s.copy(shadows = it)) }
+            LabeledSlider(if (photo) "Local contrast" else "Outlines", s.detail, Settings.DETAIL, "×%.1f") { set(s.copy(detail = it)) }
+            LabeledSlider("Saturation", s.saturation, Settings.SATURATION, "×%.2f") { set(s.copy(saturation = it)) }
+            LabeledSlider("Hue", s.hue, Settings.HUE, "%+.0f°") { set(s.copy(hue = it)) }
+            SwitchRow(
+                "True hues",
+                if (photo && s.tone == ToneMap.VIVID) "Not used with Vivid tone mapping."
+                else "Keep colors the inks can't fully make (magenta, deep skin) on their hue, a little paler.",
+                s.keepHue,
+            ) { set(s.copy(keepHue = it)) }
+            SwitchRow("Pixel-sharp resize", "Scale without smoothing, for pixel art.", s.nearest) { set(s.copy(nearest = it)) }
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = vm::resetAdvanced, Modifier.weight(1f)) { Text("Reset") }
+                OutlinedButton(onClick = { vm.saveAdvancedAsDefault(); savedNote = true }, Modifier.weight(1f)) {
+                    Text(if (savedNote) "Saved" else "Save as default")
+                }
+            }
+            Text(
+                "Save as default makes these the starting point for ${vm.currentType.label.lowercase()} photos.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        Button(onClick = vm::sendAdvanced, Modifier.fillMaxWidth().padding(16.dp)) {
+            Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("Send to frame")
+        }
+    }
+    LaunchedEffect(s) { savedNote = false }
+}
+
+@Composable
+private fun <T> ChipRow(label: String, options: List<Pair<String, T>>, selected: T, onSelect: (T) -> Unit) {
+    Text(label, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall)
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (name, value) -> FilterChip(selected = value == selected, onClick = { onSelect(value) }, label = { Text(name) }) }
+    }
+}
+
+@Composable
+private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, format: String, onChange: (Float) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.titleSmall)
+            Text(format.format(value), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Slider(value = value.coerceIn(range), onValueChange = onChange, valueRange = range)
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.titleSmall)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
 }
 
 // ---- Preview calibration -----------------------------------------------------------------------

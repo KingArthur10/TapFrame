@@ -1,6 +1,9 @@
 package dev.tapframe.render
 
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.sin
 
 /**
  * How the photo's tones are compressed into the panel's ~3.6 stops before dithering. NATURAL,
@@ -43,12 +46,21 @@ data class Settings(
      * by [ToneMap.VIVID], which deliberately dithers against idealized inks.
      */
     val keepHue: Boolean = true,
+    /** Lifts (+) or recovers (−) the bright tones only. Range [HIGHLIGHTS]. */
+    val highlights: Float = 0f,
+    /** Lifts (+) or deepens (−) the dark tones only. Range [SHADOWS]. */
+    val shadows: Float = 0f,
+    /** Rotates every hue by this many degrees. Range [HUE]. */
+    val hue: Float = 0f,
 ) {
     companion object {
         val BRIGHTNESS = -0.3f..0.3f
         val CONTRAST = -0.5f..1.5f
         val SATURATION = 0.6f..2.0f
         val DETAIL = 0f..3f
+        val HIGHLIGHTS = -1f..1f
+        val SHADOWS = -1f..1f
+        val HUE = -180f..180f
     }
 }
 
@@ -134,8 +146,12 @@ enum class ContentType(val label: String, val candidates: List<Dither.Method>, v
 
 /** Tone and color adjustments applied to the fitted photo before panel mapping and dithering. */
 object Adjust {
+    /** Peak lightness change of the highlights and shadows controls (small enough to stay monotonic). */
+    private const val TONE_AMOUNT = 0.14f
+
     fun apply(rgb: IntArray, s: Settings): IntArray {
-        if (s.brightness == 0f && s.contrast == 0f && s.saturation == 1f) return rgb
+        if (s.brightness == 0f && s.contrast == 0f && s.saturation == 1f && s.highlights == 0f && s.shadows == 0f && s.hue == 0f) return rgb
+        val cosH = cos(Math.toRadians(s.hue.toDouble())).toFloat(); val sinH = sin(Math.toRadians(s.hue.toDouble())).toFloat()
         val g = 6f * s.contrast
         fun sig(v: Float) = 1f / (1f + exp(-g * (v - 0.5f)))
         val lo = sig(0f); val hi = sig(1f)
@@ -148,8 +164,13 @@ object Adjust {
                 s.contrast < -0.001f -> 0.5f + (l - 0.5f) * (1f + s.contrast)
                 else -> l
             }
-            lab[0] = l
-            lab[1] *= s.saturation; lab[2] *= s.saturation
+            // Highlights act on the upper half of the range, shadows on the lower, each as a bump
+            // that is zero at mid-gray and at the ends.
+            l += if (l > 0.5f) s.highlights * TONE_AMOUNT * sin(PI.toFloat() * (l - 0.5f) * 2f)
+            else s.shadows * TONE_AMOUNT * sin(PI.toFloat() * l * 2f)
+            lab[0] = l.coerceIn(0f, 1f)
+            val a = lab[1] * s.saturation; val b = lab[2] * s.saturation
+            lab[1] = a * cosH - b * sinH; lab[2] = a * sinH + b * cosH
             Srgb.fromLinear(OkLab.toLinear(lab))
         }
     }

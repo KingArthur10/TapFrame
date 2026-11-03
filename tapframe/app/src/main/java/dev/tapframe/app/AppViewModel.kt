@@ -23,11 +23,14 @@ import dev.tapframe.render.PreviewLook
 import dev.tapframe.render.Settings
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Screens of the photo flow. */
-enum class Screen { HOME, CROP, EXAM, RESULT, SETTINGS, CALIBRATE }
+enum class Screen { HOME, CROP, EXAM, RESULT, SETTINGS, CALIBRATE, ADVANCED }
 
 /**
  * App state: the chosen photo (rotated source, crop, faces, style ranking), the tuning exam,
@@ -128,6 +131,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Screen.HOME -> return false
             Screen.CROP, Screen.SETTINGS -> Screen.HOME
             Screen.CALIBRATE -> Screen.SETTINGS
+            Screen.ADVANCED -> advancedReturn
             Screen.EXAM -> Screen.CROP
             Screen.RESULT -> Screen.EXAM.also { restartExam() }
         }
@@ -164,8 +168,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(90f * quarterTurns) }, true)
     }
 
-    /** The user framed the photo: prepare it and start the exam with the ranked style list. */
-    fun confirmCrop(crop: PhotoPipeline.Crop) {
+    /**
+     * The user framed the photo: prepare it, then start the exam with the ranked style list, or
+     * with [advanced] open the manual editor on the most likely style's saved settings.
+     */
+    fun confirmCrop(crop: PhotoPipeline.Crop, advanced: Boolean = false) {
         val bmp = source ?: return
         busyMessage = "Preparing…"
         viewModelScope.launch {
@@ -186,7 +193,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             faceCount = faces.size
             busyMessage = null
             restartExam()
-            screen = Screen.EXAM
+            if (advanced) openAdvanced(profiles.get(ranking.first()), from = Screen.CROP) else screen = Screen.EXAM
         }
     }
 
@@ -250,19 +257,93 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun codesFor(settings: Settings): ByteArray = codes.getOrPut(settings) {
+    private fun codesFor(settings: Settings): ByteArray = codes.getOrPut(settings) { renderCodes(settings) }
+
+    /** Renders [settings] for the current photo (uncached). */
+    private fun renderCodes(settings: Settings): ByteArray =
         when {
             settings.effect == Effect.AI_CARTOON -> PhotoPipeline.render(fitted!!, settings, aiCartoon = aiCartoonImage())
             settings.nearest -> PhotoPipeline.render(fittedNearest!!, settings)
             else -> PhotoPipeline.render(fitted!!, settings, faces)
         }
-    }
 
     @Synchronized
     private fun aiCartoonImage(): IntArray = aiCartoon ?: cartoonModel.cartoonize(aiInput!!).also { aiCartoon = it }
 
     override fun onCleared() {
         runCatching { cartoonModel.close() }
+    }
+
+    // ---- Advanced editing --------------------------------------------------------------------
+
+    /** Settings being edited by hand. */
+    var advanced by mutableStateOf<Settings?>(null)
+        private set
+    /** The latest finished preview of [advanced]; may lag a slider by one render. */
+    var advancedPreview by mutableStateOf<Bitmap?>(null)
+        private set
+    var advancedRendering by mutableStateOf(false)
+        private set
+    private var advancedReturn = Screen.CROP
+    private val advancedRequests = MutableStateFlow<Settings?>(null)
+
+    /** The fitted photo before any processing, for press-and-hold comparison. */
+    val originalPreview: Bitmap? get() = fitted?.let { f ->
+        Bitmap.createBitmap(IntArray(f.size) { f[it] or (0xFF shl 24) }, PhotoPipeline.PORTRAIT_W, PhotoPipeline.PORTRAIT_H, Bitmap.Config.ARGB_8888)
+    }
+
+    init {
+        // One renderer: always works on the newest settings and skips the ones it couldn't get to,
+        // so dragging a slider never queues up stale renders.
+        viewModelScope.launch {
+            advancedRequests.filterNotNull().conflate().collect { s ->
+                advancedRendering = true
+                val currentLook = look
+                val started = System.currentTimeMillis()
+                val bmp = withContext(Dispatchers.Default) {
+                    Bitmap.createBitmap(
+                        currentLook.apply(PhotoPipeline.simulatedPortrait(renderCodes(s))),
+                        PhotoPipeline.PORTRAIT_W, PhotoPipeline.PORTRAIT_H, Bitmap.Config.ARGB_8888,
+                    )
+                }
+                android.util.Log.d("TapFrame", "advanced render ${System.currentTimeMillis() - started} ms")
+                if (advancedRequests.value == s) advancedRendering = false
+                advancedPreview = bmp
+            }
+        }
+    }
+
+    /** Opens the manual editor on [start]; back returns to [from]. */
+    fun openAdvanced(start: Settings, from: Screen = screen) {
+        if (fitted == null) return
+        advancedReturn = from
+        advancedPreview = null
+        updateAdvanced(start)
+        screen = Screen.ADVANCED
+    }
+
+    fun updateAdvanced(s: Settings) {
+        advanced = s
+        advancedRequests.value = s
+    }
+
+    /** Back to the style's defaults (not the saved profile). */
+    fun resetAdvanced() = updateAdvanced(currentType.defaults)
+
+    /** Saves the edited settings as the starting point for the current photo style. */
+    fun saveAdvancedAsDefault() {
+        advanced?.let { profiles.put(currentType, it) }
+    }
+
+    fun sendAdvanced() {
+        val settings = advanced ?: return
+        val type = currentType
+        viewModelScope.launch {
+            val c = withContext(Dispatchers.Default) { renderCodes(settings) }
+            val packed = Frame.packPixels(c)
+            val label = "${type.label} · manual · ${settings.method.label}"
+            sender.arm("advanced ${describe(settings)}", label, packed) { record(packed, c, label) }
+        }
     }
 
     // ---- Sending -----------------------------------------------------------------------------
@@ -314,6 +395,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun resetProfiles() = profiles.reset()
 
     fun describe(s: Settings) =
-        "${s.tone.label}, ${s.method.label}, brightness %+.1f, contrast %+.1f, detail ×%.1f, color ×%.2f%s"
-            .format(s.brightness, s.contrast, s.detail, s.saturation, if (s.keepHue) ", true hues" else "")
+        buildString {
+            append("${s.tone.label}, ${s.method.label}, brightness %+.1f, contrast %+.1f, detail ×%.1f, color ×%.2f".format(s.brightness, s.contrast, s.detail, s.saturation))
+            if (s.highlights != 0f) append(", highlights %+.2f".format(s.highlights))
+            if (s.shadows != 0f) append(", shadows %+.2f".format(s.shadows))
+            if (s.hue != 0f) append(", hue %+.0f°".format(s.hue))
+            if (s.keepHue) append(", true hues")
+        }
 }
