@@ -35,7 +35,10 @@ sealed class SendState {
  */
 class Sender(private val compression: () -> Boolean) {
 
-    private class Job(val id: String, val label: String, val packed: ByteArray, var compressed: Boolean, val onDone: () -> Unit)
+    private class Job(val id: String, val label: String, val packed: ByteArray, var compressed: Boolean, val onDone: () -> Unit) {
+        /** UID of the frame that received the whole image before the connection dropped. */
+        var uploadedTo: String? = null
+    }
 
     private val _state = MutableStateFlow<SendState>(SendState.Idle)
     val state: StateFlow<SendState> = _state.asStateFlow()
@@ -68,21 +71,36 @@ class Sender(private val compression: () -> Boolean) {
         if (busy) return
         val iso = IsoDep.get(tag) ?: return
         busy = true
-        _state.value = SendState.Uploading(0f)
+        val uid = tag.id.joinToString("") { "%02X".format(it) }
+        val resume = j.uploadedTo == uid
+        _state.value = if (resume) SendState.Refreshing(0) else SendState.Uploading(0f)
         val start = System.currentTimeMillis()
+        var session: FrameSession? = null
         try {
+            if (resume) {
+                Log.d(TAG, "RESUME ${j.id} on $uid")
+                session = FrameSession(iso, { Log.d(TAG, it) }) { p ->
+                    if (p is FrameSession.Progress.Refreshing) _state.value = SendState.Refreshing(p.elapsedMs)
+                }
+                try {
+                    session.resumeRefresh()
+                } catch (e: FrameSession.FrameException) {
+                    j.uploadedTo = null // the frame would not refresh: upload again next time
+                    throw e
+                }
+                finish(j, start)
+                return
+            }
             val upload = if (j.compressed) Apdu.buildUpload(j.packed, Lzo::compress) else Apdu.buildUpload(j.packed)
             Log.d(TAG, "SEND ${j.id} (${upload.size} blocks, compressed=${j.compressed})")
-            FrameSession(iso, { Log.d(TAG, it) }) { p ->
+            session = FrameSession(iso, { Log.d(TAG, it) }) { p ->
                 _state.value = when (p) {
                     is FrameSession.Progress.Uploading -> SendState.Uploading(p.done.toFloat() / p.total)
                     is FrameSession.Progress.Refreshing -> SendState.Refreshing(p.elapsedMs)
                 }
-            }.send(upload)
-            job = null
-            Log.d(TAG, "DONE ${j.id}")
-            _state.value = SendState.Done((System.currentTimeMillis() - start) / 1000)
-            j.onDone()
+            }
+            session.send(upload)
+            finish(j, start)
         } catch (e: FrameSession.UploadRejected) {
             Log.d(TAG, "FAIL ${j.id}: $e")
             if (j.compressed) {
@@ -93,10 +111,22 @@ class Sender(private val compression: () -> Boolean) {
             }
         } catch (e: Exception) {
             Log.d(TAG, "FAIL ${j.id}: $e")
-            _state.value = SendState.Failed(friendly(e))
+            if (session?.uploaded == true && j.uploadedTo == null && e !is FrameSession.FrameException) {
+                j.uploadedTo = uid
+                _state.value = SendState.Failed("The connection dropped while the display was updating. Tap the frame again to finish; the image is already on it.")
+            } else {
+                _state.value = SendState.Failed(friendly(e))
+            }
         } finally {
             busy = false
         }
+    }
+
+    private fun finish(j: Job, start: Long) {
+        job = null
+        Log.d(TAG, "DONE ${j.id}")
+        _state.value = SendState.Done((System.currentTimeMillis() - start) / 1000)
+        j.onDone()
     }
 
     private fun friendly(e: Exception): String = when {

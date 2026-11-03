@@ -26,6 +26,10 @@ class FrameSession(
         data class Refreshing(val elapsedMs: Long) : Progress()
     }
 
+    /** True once every image block was accepted; a later failure may be resumable with [resumeRefresh]. */
+    @Volatile var uploaded = false
+        private set
+
     /** Connects, uploads [upload] (F0D3 APDUs), refreshes and waits for the panel to finish. */
     fun send(upload: List<ByteArray>) {
         iso.connect()
@@ -42,7 +46,26 @@ class FrameSession(
                 if (i % 8 == 0 || i == upload.lastIndex) onProgress(Progress.Uploading(i + 1, upload.size))
             }
             log("Uploaded ${upload.size} blocks in ${System.currentTimeMillis() - started} ms")
+            uploaded = true
 
+            refresh()
+        } finally {
+            runCatching { iso.close() }
+        }
+    }
+
+    /**
+     * Experimental: refresh without uploading, after a connection dropped once the upload had
+     * finished. Works only if the frame kept the image in memory while unpowered.
+     */
+    fun resumeRefresh() {
+        iso.connect()
+        iso.timeout = 50_000
+        try {
+            val info = DeviceInfo.parse(expectOk(Apdu.READ_INFO))
+            log("Frame ${info.uid}: resuming refresh without upload")
+            expectOk(Apdu.READ_D8)
+            uploaded = true
             refresh()
         } finally {
             runCatching { iso.close() }
