@@ -11,24 +11,41 @@ object PhotoPipeline {
     const val PORTRAIT_W = Frame.HEIGHT // 304
     const val PORTRAIT_H = Frame.WIDTH  // 400
 
-    /**
-     * Center-crops [argb] (w x h) to the portrait aspect and scales it to 304 x 400: box filter in
-     * linear light, or nearest neighbour ([nearest]) to keep pixel art crisp.
-     */
-    fun fitPortrait(argb: IntArray, w: Int, h: Int, nearest: Boolean = false): IntArray {
-        require(argb.size == w * h)
+    /** A crop rectangle in source-image pixels; its aspect should be PORTRAIT_W : PORTRAIT_H. */
+    data class Crop(val left: Float, val top: Float, val width: Float, val height: Float) {
+        /** Maps a source-image point into the fitted portrait. */
+        fun toPortrait(x: Float, y: Float): Pair<Float, Float> =
+            (x - left) * PORTRAIT_W / width to (y - top) * PORTRAIT_H / height
+
+        /** Portrait-coordinate size of a source-image length. */
+        fun toPortraitLength(len: Float): Float = len * PORTRAIT_W / width
+    }
+
+    /** The largest centered crop of a w x h image with the portrait aspect. */
+    fun centerCrop(w: Int, h: Int): Crop {
         val scale = minOf(w.toFloat() / PORTRAIT_W, h.toFloat() / PORTRAIT_H)
-        val cropX = (w - PORTRAIT_W * scale) / 2
-        val cropY = (h - PORTRAIT_H * scale) / 2
+        return Crop((w - PORTRAIT_W * scale) / 2, (h - PORTRAIT_H * scale) / 2, PORTRAIT_W * scale, PORTRAIT_H * scale)
+    }
+
+    /**
+     * Scales the [crop] of [argb] (w x h) to 304 x 400: box filter in linear light, or nearest
+     * neighbour ([nearest]) to keep pixel art crisp. Areas outside the image are white.
+     */
+    fun fitPortrait(argb: IntArray, w: Int, h: Int, nearest: Boolean = false, crop: Crop = centerCrop(w, h)): IntArray {
+        require(argb.size == w * h)
+        val sx = crop.width / PORTRAIT_W
+        val sy = crop.height / PORTRAIT_H
         return IntArray(PORTRAIT_W * PORTRAIT_H) { i ->
             val ox = i % PORTRAIT_W; val oy = i / PORTRAIT_W
             if (nearest) {
-                val x = (cropX + (ox + 0.5f) * scale).toInt().coerceIn(0, w - 1)
-                val y = (cropY + (oy + 0.5f) * scale).toInt().coerceIn(0, h - 1)
-                return@IntArray argb[y * w + x] and 0xFFFFFF
+                val x = (crop.left + (ox + 0.5f) * sx).toInt()
+                val y = (crop.top + (oy + 0.5f) * sy).toInt()
+                return@IntArray if (x in 0 until w && y in 0 until h) argb[y * w + x] and 0xFFFFFF else 0xFFFFFF
             }
-            val x0 = (cropX + ox * scale).toInt(); val x1 = maxOf(x0 + 1, (cropX + (ox + 1) * scale).toInt()).coerceAtMost(w)
-            val y0 = (cropY + oy * scale).toInt(); val y1 = maxOf(y0 + 1, (cropY + (oy + 1) * scale).toInt()).coerceAtMost(h)
+            val fx0 = crop.left + ox * sx; val fy0 = crop.top + oy * sy
+            val x0 = fx0.toInt().coerceIn(0, w); val x1 = maxOf(x0 + 1, (fx0 + sx).toInt()).coerceIn(0, w)
+            val y0 = fy0.toInt().coerceIn(0, h); val y1 = maxOf(y0 + 1, (fy0 + sy).toInt()).coerceIn(0, h)
+            if (x1 <= x0 || y1 <= y0) return@IntArray 0xFFFFFF
             val sum = FloatArray(3)
             for (y in y0 until y1) for (x in x0 until x1) {
                 val c = Srgb.toLinear(argb[y * w + x])
@@ -67,15 +84,6 @@ object PhotoPipeline {
         val diffusion = settings.method in setOf(Dither.Method.FLOYD_STEINBERG, Dither.Method.STUCKI, Dither.Method.ATKINSON)
         return Dither.dither(toBuffer(prepared), Frame.WIDTH, Frame.HEIGHT, settings.method, palette, serpentine = diffusion)
     }
-
-    /** Maps a point of the source image (w x h) into the fitted portrait, as [fitPortrait] crops it. */
-    fun toPortraitPoint(x: Float, y: Float, w: Int, h: Int): Pair<Float, Float> {
-        val scale = minOf(w.toFloat() / PORTRAIT_W, h.toFloat() / PORTRAIT_H)
-        return ((x - (w - PORTRAIT_W * scale) / 2) / scale) to ((y - (h - PORTRAIT_H * scale) / 2) / scale)
-    }
-
-    /** Portrait-coordinate size of a source-image length, as [fitPortrait] scales it. */
-    fun toPortraitLength(len: Float, w: Int, h: Int): Float = len / minOf(w.toFloat() / PORTRAIT_W, h.toFloat() / PORTRAIT_H)
 
     /**
      * Einky's pre-dither curve, found by matching its ink usage on a captured photo

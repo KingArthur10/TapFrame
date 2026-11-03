@@ -18,6 +18,129 @@ object Lzo {
         return header + data + END_MARKER
     }
 
+    /**
+     * LZO1X compressor using literal runs, "M2" matches (length 3–8, distance ≤ 2048, 2 bytes) and
+     * "M3" matches (length ≥ 4, distance ≤ 16384), which every LZO1X decoder supports. Every match
+     * saves at least one byte, so the output is never more than a few bytes larger than the input
+     * and always fits the frame's chunk buffer.
+     *
+     * Stream rules mirrored from the decoder: after a match, 1–3 following literals go into the
+     * low two bits of the match instruction (M2: its first byte, M3: its first offset byte) and must
+     * be followed by another match; 4+ literals need a literal-run instruction, which must also be
+     * followed by a match. The stream ends with the marker 11 00 00 (a match with offset 0).
+     */
+    fun compress(data: ByteArray): ByteArray {
+        require(data.isNotEmpty()) { "nothing to encode" }
+        val out = Output(data.size + data.size / 16 + 16)
+        val head = IntArray(1 shl HASH_BITS) { -1 }
+        val prev = IntArray(data.size) { -1 }
+        var afterMatch = false
+        var stateIndex = -1 // byte of the previous match that holds the following literal count
+        var literalStart = 0
+
+        fun insert(i: Int) {
+            if (i + 3 > data.size) return
+            val h = hash(data, i)
+            prev[i] = head[h]
+            head[h] = i
+        }
+
+        fun literals(end: Int) {
+            val n = end - literalStart
+            if (n == 0) return
+            when {
+                !afterMatch && n <= 238 -> out.byte(n + 17)
+                afterMatch && n <= 3 -> out.or(stateIndex, n)
+                n <= 18 -> out.byte(n - 3)
+                else -> { out.byte(0); out.extended(n - 18) }
+            }
+            out.bytes(data, literalStart, end)
+        }
+
+        var i = 0
+        while (i + 3 <= data.size) {
+            // Longest match among the most recent candidates with the same 3-byte hash.
+            var bestLen = 0
+            var bestDist = 0
+            var c = head[hash(data, i)]
+            var tries = MAX_TRIES
+            while (c >= 0 && i - c <= MAX_DISTANCE && tries-- > 0) {
+                var len = 0
+                while (i + len < data.size && data[c + len] == data[i + len]) len++
+                val dist = i - c
+                val usable = len >= 4 || (len == 3 && dist <= M2_MAX_DISTANCE)
+                if (usable && (len > bestLen || (len == bestLen && dist < bestDist))) {
+                    bestLen = len; bestDist = dist
+                }
+                c = prev[c]
+            }
+            if (bestLen == 0) {
+                insert(i)
+                i++
+                continue
+            }
+            literals(i)
+            if (bestLen <= 8 && bestDist <= M2_MAX_DISTANCE) {
+                val d = bestDist - 1
+                stateIndex = out.size
+                out.byte(((bestLen - 1) shl 5) or ((d and 7) shl 2))
+                out.byte(d ushr 3)
+            } else {
+                if (bestLen - 2 <= 31) out.byte(32 or (bestLen - 2)) else { out.byte(32); out.extended(bestLen - 2 - 31) }
+                val offset = (bestDist - 1) shl 2
+                stateIndex = out.size
+                out.byte(offset and 0xFF)
+                out.byte(offset ushr 8)
+            }
+            afterMatch = true
+            for (k in i until i + bestLen) insert(k)
+            i += bestLen
+            literalStart = i
+        }
+        literals(data.size)
+        END_MARKER.forEach { out.byte(it.toInt()) }
+        return out.toByteArray()
+    }
+
+    private const val MAX_DISTANCE = 16384
+    private const val M2_MAX_DISTANCE = 2048
+    private const val MAX_TRIES = 16
+    private const val HASH_BITS = 13
+
+    private fun hash(d: ByteArray, i: Int): Int {
+        val v = (d[i].toInt() and 0xFF) or ((d[i + 1].toInt() and 0xFF) shl 8) or ((d[i + 2].toInt() and 0xFF) shl 16)
+        return (v * -1640531535) ushr (32 - HASH_BITS)
+    }
+
+    /** Growable byte buffer with the LZO zero-extension length encoding. */
+    private class Output(capacity: Int) {
+        private var buf = ByteArray(capacity)
+        var size = 0
+            private set
+
+        fun byte(v: Int) {
+            if (size == buf.size) buf = buf.copyOf(buf.size * 2)
+            buf[size++] = v.toByte()
+        }
+
+        fun bytes(src: ByteArray, from: Int, to: Int) {
+            for (k in from until to) byte(src[k].toInt())
+        }
+
+        fun or(index: Int, bits: Int) {
+            buf[index] = (buf[index].toInt() or bits).toByte()
+        }
+
+        /** v >= 1: a zero byte per 255, then the remainder (1..255). */
+        fun extended(v: Int) {
+            var r = v
+            while (r > 255) { byte(0); r -= 255 }
+            byte(r)
+        }
+
+        fun toByteArray(): ByteArray = buf.copyOf(size)
+    }
+
     /** LZO1X decompressor (port of the verified decoder in scripts/decode_capture.py). */
     fun decompress(src: ByteArray): ByteArray = Decoder(src).run()
 

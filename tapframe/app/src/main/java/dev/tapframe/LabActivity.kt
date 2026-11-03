@@ -1,7 +1,6 @@
 package dev.tapframe
 
 import android.app.Activity
-import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.View
@@ -23,19 +22,21 @@ import dev.tapframe.render.PhotoPipeline
 import dev.tapframe.render.Preview
 
 /**
- * Test harness: choose a target, check the preview, tap Send, then hold the phone on the frame.
- *  - Replay: the exact upload Einky sent (assets/replay_capture1.txt).
+ * Lab: the panel test harness (Settings → Lab). Choose a target, check the preview, tap Send, then
+ * hold the phone on the frame.
+ *  - Replay: the exact upload Einky sent (assets/replay_capture1.txt), when present.
  *  - Test patterns: panel characterization patterns (see TESTPLAN.md), sent with our own encoder.
- * "Photo exam…" opens [ExamActivity] for tuning a photo.
  */
-class MainActivity : Activity() {
+class LabActivity : Activity() {
 
     /** Something that can be sent: an id for the log, a label, the packed image and its APDUs. */
     private class Target(val id: String, val label: String, val image: () -> ByteArray, val upload: (ByteArray) -> List<ByteArray>)
 
     private val targets: List<Target> by lazy {
-        listOf(Target("replay", "Replay Einky capture", ::replayImage) { loadReplay() }) +
-            TestPatterns.all.map { p ->
+        val replay = if ("replay_capture1.txt" in (assets.list("") ?: emptyArray())) {
+            listOf(Target("replay", "Replay Einky capture", ::replayImage) { loadReplay() })
+        } else emptyList()
+        replay + TestPatterns.all.map { p ->
                 Target(p.id, p.title, { Frame.packPixels(p.render()) }) { image -> Apdu.buildUpload(image) }
             }
     }
@@ -51,12 +52,8 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val pad = (16 * resources.displayMetrics.density).toInt()
         status = TextView(this).apply { textSize = 18f; text = "Choose a pattern, then tap Send." }
-        val exam = Button(this).apply {
-            text = "Photo exam…"
-            setOnClickListener { startActivity(Intent(this@MainActivity, ExamActivity::class.java)) }
-        }
         val picker = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, targets.map { it.label })
+            adapter = ArrayAdapter(this@LabActivity, android.R.layout.simple_spinner_dropdown_item, targets.map { it.label })
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = select(position)
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
@@ -73,7 +70,6 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
             addView(status)
-            addView(exam, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(picker, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(preview, LinearLayout.LayoutParams(MATCH_PARENT, 0, 2f))
             addView(send, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))

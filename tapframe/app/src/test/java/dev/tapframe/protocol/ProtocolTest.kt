@@ -7,13 +7,19 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 class ProtocolTest {
 
-    /** The 187 F0D3 APDUs Einky sent in capture 1 (working directory is the app module). */
-    private val captured: List<String> =
-        File("src/main/assets/replay_capture1.txt").readLines().map { it.trim() }.filter { it.startsWith("F0D3") }
+    /**
+     * The 187 F0D3 APDUs Einky sent in capture 1 (working directory is the app module). The capture
+     * holds a personal photo and is not in git; tests that need it are skipped when it is absent.
+     */
+    private val captureFile = File("src/main/assets/replay_capture1.txt")
+    private val captured: List<String> by lazy {
+        captureFile.readLines().map { it.trim() }.filter { it.startsWith("F0D3") }
+    }
 
     /** Compressed payload per (section, chunk), in upload order. */
     private fun capturedChunks(): List<ByteArray> {
@@ -31,6 +37,7 @@ class ProtocolTest {
 
     @Test
     fun decompressesCapturedImage() {
+        assumeTrue(captureFile.exists())
         val parts = capturedChunks().map(Lzo::decompress)
         assertEquals(List(4) { List(7) { 2000 } + 1200 }.flatten(), parts.map { it.size })
         val image = parts.reduce(ByteArray::plus)
@@ -39,6 +46,7 @@ class ProtocolTest {
 
     @Test
     fun reproducesCapturedUploadExactly() {
+        assumeTrue(captureFile.exists())
         val compressed = capturedChunks()
         val image = compressed.map(Lzo::decompress).reduce(ByteArray::plus)
         val it = compressed.iterator()
@@ -59,6 +67,42 @@ class ProtocolTest {
         assertEquals(2012, big.size)
         assertTrue(big.copyOfRange(0, 8).all { it == 0.toByte() })
         assertEquals(0xC5.toByte(), big[8])
+    }
+
+    @Test
+    fun compressorRoundTripsAndStaysWithinTheChunkBuffer() {
+        val rnd = Random(7)
+        val inputs = mutableListOf<ByteArray>()
+        for (n in listOf(1, 2, 3, 4, 5, 17, 18, 19, 238, 239, 240, 1200, 2000)) inputs += rnd.nextBytes(n)
+        inputs += ByteArray(2000)                                              // one long overlapping match
+        inputs += ByteArray(2000) { (it % 7).toByte() }                         // short period
+        inputs += ByteArray(2000) { if (rnd.nextInt(10) == 0) rnd.nextInt().toByte() else (it % 3).toByte() }
+        inputs += ByteArray(37) { (it / 5).toByte() }                           // runs of 5
+        val packed = Frame.packPixels(Frame.testPattern())
+        for (k in 0 until packed.size step 2000) inputs += packed.copyOfRange(k, minOf(k + 2000, packed.size))
+        for (data in inputs) {
+            val c = Lzo.compress(data)
+            assertArrayEquals("n=${data.size}", data, Lzo.decompress(c))
+            assertTrue("n=${data.size} -> ${c.size}", c.size <= data.size + 16)
+            if (data.size == 2000) assertTrue(c.size <= 2192)
+        }
+        assertTrue(Lzo.compress(ByteArray(2000)).size < 20)
+    }
+
+    @Test
+    fun compressorShrinksDitheredPhotos() {
+        val photo = IntArray(Frame.WIDTH * Frame.HEIGHT) { i ->
+            val x = i % Frame.WIDTH; val y = i / Frame.WIDTH
+            ((x * 255 / Frame.WIDTH) shl 16) or ((y * 255 / Frame.HEIGHT) shl 8) or 0x60
+        }
+        val packed = Frame.packPixels(dev.tapframe.render.Dither.dither(photo, Frame.WIDTH, Frame.HEIGHT, dev.tapframe.render.Dither.Method.FLOYD_STEINBERG))
+        val literal = Apdu.buildUpload(packed).size
+        val compressed = Apdu.buildUpload(packed, Lzo::compress).size
+        assertTrue("$compressed vs $literal blocks", compressed < literal)
+        val regrouped = Apdu.buildUpload(packed, Lzo::compress).groupBy { it[2].toInt() to it[5].toInt() }.values
+            .map { blocks -> Lzo.decompress(blocks.map { it.copyOfRange(7, it.size) }.reduce(ByteArray::plus)) }
+            .reduce(ByteArray::plus)
+        assertArrayEquals(packed, regrouped)
     }
 
     @Test

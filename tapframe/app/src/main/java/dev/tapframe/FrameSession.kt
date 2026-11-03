@@ -8,9 +8,23 @@ import dev.tapframe.protocol.DeviceInfo
  * One battery-free update of a Tapmora frame over an already discovered [IsoDep] tag.
  * Mirrors the sequence and refresh handling of Einky 1.0.27 (see PROTOCOL.md).
  */
-class FrameSession(private val iso: IsoDep, private val log: (String) -> Unit) {
+class FrameSession(
+    private val iso: IsoDep,
+    private val log: (String) -> Unit,
+    private val onProgress: (Progress) -> Unit = {},
+) {
 
-    class FrameException(message: String) : Exception(message)
+    open class FrameException(message: String) : Exception(message)
+
+    /** The frame refused an image block; with compressed data, a literal-only retry may succeed. */
+    class UploadRejected(block: Int, status: String) : FrameException("Upload block $block rejected: $status")
+
+    sealed class Progress {
+        /** [done] of [total] image blocks sent. */
+        data class Uploading(val done: Int, val total: Int) : Progress()
+        /** The panel is redrawing; [elapsedMs] since the refresh command was accepted. */
+        data class Refreshing(val elapsedMs: Long) : Progress()
+    }
 
     /** Connects, uploads [upload] (F0D3 APDUs), refreshes and waits for the panel to finish. */
     fun send(upload: List<ByteArray>) {
@@ -24,7 +38,8 @@ class FrameSession(private val iso: IsoDep, private val log: (String) -> Unit) {
             val started = System.currentTimeMillis()
             upload.forEachIndexed { i, apdu ->
                 val r = transceive(apdu, verbose = false)
-                if (!Apdu.isOk(r)) throw FrameException("Upload block $i rejected: ${Apdu.toHex(r)}")
+                if (!Apdu.isOk(r)) throw UploadRejected(i, Apdu.toHex(r))
+                if (i % 8 == 0 || i == upload.lastIndex) onProgress(Progress.Uploading(i + 1, upload.size))
             }
             log("Uploaded ${upload.size} blocks in ${System.currentTimeMillis() - started} ms")
 
@@ -58,6 +73,7 @@ class FrameSession(private val iso: IsoDep, private val log: (String) -> Unit) {
         while (true) {
             val elapsed = System.currentTimeMillis() - start
             if (elapsed >= 60_000) throw FrameException("Refresh timed out")
+            onProgress(Progress.Refreshing(elapsed))
             when (val r = Apdu.toHex(transceive(Apdu.POLL, verbose = false))) {
                 "019000" -> sawBusy = true
                 "009000" -> if (elapsed >= 3_000) {
