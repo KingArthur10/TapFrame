@@ -37,12 +37,16 @@ class Profiles(context: Context) {
                 shadows = f.getOrNull(9)?.toFloat() ?: 0f,
                 hue = f.getOrNull(10)?.toFloat() ?: 0f,
                 aiStyle = f.getOrNull(11) ?: fallback.aiStyle,
+                blueDepth = f.getOrNull(12)?.toFloat() ?: fallback.blueDepth,
+                redDepth = f.getOrNull(13)?.toFloat() ?: fallback.redDepth,
+                yellowDepth = f.getOrNull(14)?.toFloat() ?: fallback.yellowDepth,
+                greenDepth = f.getOrNull(15)?.toFloat() ?: fallback.greenDepth,
             )
         }.getOrDefault(fallback)
     }
 
     private fun save(key: String, s: Settings) {
-        prefs.edit().putString(key, "${s.tone.name},${s.method.name},${s.brightness},${s.contrast},${s.saturation},${s.detail},${s.nearest},${s.keepHue},${s.highlights},${s.shadows},${s.hue},${s.aiStyle}").apply()
+        prefs.edit().putString(key, "${s.tone.name},${s.method.name},${s.brightness},${s.contrast},${s.saturation},${s.detail},${s.nearest},${s.keepHue},${s.highlights},${s.shadows},${s.hue},${s.aiStyle},${s.blueDepth},${s.redDepth},${s.yellowDepth},${s.greenDepth}").apply()
     }
 
     fun reset() = prefs.edit().clear().apply()
@@ -51,7 +55,7 @@ class Profiles(context: Context) {
         private const val MANUAL = "MANUAL"
 
         /** Manual editing's starting point until the user saves their own. */
-        val MANUAL_DEFAULT = Settings(Dither.Method.ATKINSON, ToneMap.VIVID)
+        val MANUAL_DEFAULT = Settings(Dither.Method.ATKINSON, ToneMap.VIVID, blueDepth = 0.5f)
     }
 }
 

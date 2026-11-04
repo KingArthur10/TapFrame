@@ -42,7 +42,7 @@ class Exam(
     }
 
     private enum class Round(val title: String) {
-        STYLE("Photo style"), TONE("Tone"), METHOD("Dithering style"), BRIGHTNESS("Brightness"), CONTRAST("Contrast"), DETAIL("Detail"), SATURATION("Color"),
+        STYLE("Photo style"), TONE("Tone"), METHOD("Dithering style"), BRIGHTNESS("Brightness"), CONTRAST("Contrast"), DETAIL("Detail"), SATURATION("Color"), DEPTH("Blue depth"),
     }
 
     private enum class Param(val step: Float, val range: ClosedFloatingPointRange<Float>) {
@@ -50,6 +50,7 @@ class Exam(
         CONTRAST(0.4f, Settings.CONTRAST),
         DETAIL(0.5f, Settings.DETAIL),
         SATURATION(0.25f, Settings.SATURATION),
+        DEPTH(0.3f, Settings.BLUE_DEPTH),
     }
 
     var type: ContentType = ranking.first()
@@ -99,6 +100,7 @@ class Exam(
             // The color round's fourth option flips hue preservation instead of a challenger
             // (Vivid ignores it, so it gets a normal challenger).
             Round.SATURATION -> tune(Param.SATURATION, current.copy(keepHue = !current.keepHue).takeIf { current.tone != ToneMap.VIVID })
+            Round.DEPTH -> tune(Param.DEPTH)
         }
         return Step.Quad(r.title, round + 1, rounds.size, options.shuffled(random))
     }
@@ -138,6 +140,7 @@ class Exam(
         Param.CONTRAST -> s.contrast
         Param.DETAIL -> s.detail
         Param.SATURATION -> s.saturation
+        Param.DEPTH -> s.blueDepth
     }
 
     private fun Param.set(s: Settings, v: Float) = when (this) {
@@ -145,5 +148,6 @@ class Exam(
         Param.CONTRAST -> s.copy(contrast = v)
         Param.DETAIL -> s.copy(detail = v)
         Param.SATURATION -> s.copy(saturation = v)
+        Param.DEPTH -> s.copy(blueDepth = v)
     }
 }

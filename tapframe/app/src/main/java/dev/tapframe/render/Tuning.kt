@@ -54,7 +54,19 @@ data class Settings(
     val hue: Float = 0f,
     /** With [Effect.AI_CARTOON]: which model, [WHITEBOX] (bundled) or a downloaded style's id. */
     val aiStyle: String = WHITEBOX,
+    /**
+     * Blue depth: prints blues darker so they use more solid blue ink and read blue (skies; see
+     * [GamutMap.enrich]). 0 = off. Range [BLUE_DEPTH] (also for the other depths).
+     */
+    val blueDepth: Float = 0f,
+    /** As [blueDepth] for reds, yellows and greens. Default off. */
+    val redDepth: Float = 0f,
+    val yellowDepth: Float = 0f,
+    val greenDepth: Float = 0f,
 ) {
+    /** Depths in [GamutMap.enrich] order: red, yellow, green, blue. */
+    val inkDepths: FloatArray get() = floatArrayOf(redDepth, yellowDepth, greenDepth, blueDepth)
+
     companion object {
         /** The bundled White-box Cartoonization model. */
         const val WHITEBOX = "whitebox"
@@ -65,6 +77,7 @@ data class Settings(
         val HIGHLIGHTS = -1f..1f
         val SHADOWS = -1f..1f
         val HUE = -180f..180f
+        val BLUE_DEPTH = 0f..1f
     }
 }
 
@@ -73,12 +86,12 @@ enum class ContentType(val label: String, val candidates: List<Dither.Method>, v
     PEOPLE(
         "People",
         listOf(Dither.Method.FLOYD_STEINBERG, Dither.Method.STUCKI, Dither.Method.BLUE_NOISE, Dither.Method.ATKINSON),
-        Settings(Dither.Method.FLOYD_STEINBERG, ToneMap.VIVID),
+        Settings(Dither.Method.FLOYD_STEINBERG, ToneMap.VIVID, blueDepth = 0.5f),
     ),
     LANDSCAPE(
         "Landscape",
         listOf(Dither.Method.BLUE_NOISE, Dither.Method.STUCKI, Dither.Method.FLOYD_STEINBERG, Dither.Method.ATKINSON),
-        Settings(Dither.Method.BLUE_NOISE, ToneMap.BALANCED),
+        Settings(Dither.Method.BLUE_NOISE, ToneMap.BALANCED, blueDepth = 0.7f),
     ),
     GRAPHIC(
         "Illustration / graphic",
@@ -182,13 +195,19 @@ object Adjust {
 
 /**
  * Predicts how the frame will look, fitted to RAW photos of the panel (scripts/preview_model.py):
- * where neighbouring pixels have different inks, the panel pulls lightness toward a mid tone and
- * loses some chroma, and the eye blends adjacent dots.
+ * where neighbouring pixels have different inks, the panel pulls lightness toward a mid tone, and
+ * the eye blends adjacent dots. Chroma: see [CHROMA_GAIN].
  */
 object FrameSim {
     private const val A = 0.55f
     private const val B = 0.2f
-    private const val C = 0.2f
+    /**
+     * Chroma, everywhere. The first unit's flash photos suggested mixed areas lose chroma (×(1 − 0.2m));
+     * the second unit's chart photos (session 4) show the opposite: panel chroma ≈ 1.2–1.3× this model's,
+     * and by eye the frame looks clearly more colorful than the phone preview. So no loss in mixes, and
+     * a uniform gain so the glowing screen preview reads like the reflective panel beside it.
+     */
+    private const val CHROMA_GAIN = 1.25f
 
     /** [codes] in buffer order (400 x 304) -> simulated appearance, same order, 0xRRGGBB. */
     fun simulate(codes: ByteArray, width: Int, height: Int): IntArray {
@@ -208,7 +227,7 @@ object FrameSim {
             val m = differ / 8f
             val lab = OkLab.fromLinear(blur)
             lab[0] += m * (A + B * lab[0] - lab[0])
-            lab[1] *= 1 - C * m; lab[2] *= 1 - C * m
+            lab[1] *= CHROMA_GAIN; lab[2] *= CHROMA_GAIN
             Srgb.fromLinear(OkLab.toLinear(lab))
         }
     }

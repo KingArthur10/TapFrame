@@ -39,11 +39,11 @@ class ExamTest {
     }
 
     @Test
-    fun convergesInSevenQuads() {
+    fun convergesInEightQuads() {
         val ideal = Settings(Dither.Method.STUCKI, ToneMap.BALANCED, brightness = 0.1f, contrast = -0.4f, saturation = 1.25f, detail = 1.5f)
         for (seed in 1..5) {
             val (result, quads) = runWith(ideal, seed = seed)
-            assertEquals(7, quads)
+            assertEquals(8, quads) // style list + tone, method, brightness, contrast, detail, color, color depth
             assertEquals(ToneMap.BALANCED, result.tone)
             assertEquals(1.5f, result.detail, 1e-4f)
             assertEquals(Dither.Method.STUCKI, result.method)

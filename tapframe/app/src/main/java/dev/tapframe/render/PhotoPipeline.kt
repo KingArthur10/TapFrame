@@ -68,7 +68,7 @@ object PhotoPipeline {
     private fun renderCartoon(fitted: IntArray, settings: Settings, aiCartoon: IntArray?): ByteArray {
         val ai = settings.effect == Effect.AI_CARTOON
         val input = if (ai) requireNotNull(aiCartoon) { "AI cartoon image missing" } else fitted
-        val styled = Cartoon.stylize(Adjust.apply(input, settings), PORTRAIT_W, PORTRAIT_H, smooth = !ai, outline = settings.detail)
+        val styled = Cartoon.stylize(GamutMap.MEASURED.enrich(Adjust.apply(input, settings), settings.inkDepths), PORTRAIT_W, PORTRAIT_H, smooth = !ai, outline = settings.detail)
         val mapped = LocalToneMap.apply(styled.rgb, PORTRAIT_W, PORTRAIT_H, 1f, 1f, emptyList())
             .let { if (settings.keepHue) GamutMap.MEASURED.apply(it) else it }
         val diffusion = settings.method in setOf(Dither.Method.FLOYD_STEINBERG, Dither.Method.STUCKI, Dither.Method.ATKINSON)
@@ -92,7 +92,8 @@ object PhotoPipeline {
      */
     fun render(fitted: IntArray, settings: Settings, faces: List<Face> = emptyList(), aiCartoon: IntArray? = null): ByteArray {
         if (settings.effect != Effect.NONE) return renderCartoon(fitted, settings, aiCartoon)
-        val adjusted = Adjust.apply(fitted, settings)
+        // Ink depths work on the photo's own colors, before tone mapping and hue keeping reduce them.
+        val adjusted = GamutMap.MEASURED.enrich(Adjust.apply(fitted, settings), settings.inkDepths)
         val tone = settings.tone
         // The Detail setting scales how far the preset's gain goes beyond "keep detail as is".
         val gain = 1f + (tone.detailGain * settings.detail - 1f).coerceAtLeast(-1f)

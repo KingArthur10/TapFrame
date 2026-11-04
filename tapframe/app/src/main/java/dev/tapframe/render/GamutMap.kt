@@ -6,6 +6,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Hue-preserving gamut mapping onto the colors the six inks can mix.
@@ -43,6 +44,9 @@ class GamutMap(inks: List<Int> = Ink.entries.map { it.rgb }) {
     private val black = points[Ink.entries.indexOf(Ink.BLACK)]
     private val white = points[Ink.entries.indexOf(Ink.WHITE)]
     private val lBlack = OkLab.fromLinear(black)[0]
+    /** Lightness of each ink-depth band's ink: red, yellow, green, blue. */
+    private val bandInkL = listOf(Ink.RED, Ink.YELLOW, Ink.GREEN, Ink.BLUE)
+        .map { OkLab.fromLinear(points[Ink.entries.indexOf(it)])[0] }.toFloatArray()
     private val lWhite = OkLab.fromLinear(white)[0]
 
     /** The panel's gray (black–white ink mix) at OKLab lightness index 0..[STEPS], in OKLab. */
@@ -120,6 +124,64 @@ class GamutMap(inks: List<Int> = Ink.entries.map { it.rgb }) {
 
     fun apply(rgb: IntArray): IntArray = IntArray(rgb.size) { map(rgb[it]) }
 
+    /**
+     * Ink depth, per hue band ([depths]: red, yellow, green, blue, each 0..1): moves a pixel's
+     * lightness toward its band's ink (where that ink prints solid and most vivid), and raises its
+     * chroma a little, in proportion to how colorful it is (neutrals stay put).
+     *
+     * Blue matters most: the blue ink is dark (lightness 0.45), so a light sky dithered as white plus
+     * scattered blue dots reads gray, while moved toward the ink it prints in mostly solid blue and
+     * reads blue. Green moves toward the dark green ink; yellow toward the light yellow ink (dark
+     * yellows get lighter); red toward the red ink. Orange and skin tones (about 40–60°) sit between
+     * the red and yellow bands and are left alone, since the same trade turns faces orange.
+     */
+    fun enrich(rgb: Int, depths: FloatArray): Int {
+        val lab = OkLab.fromLinear(Srgb.toLinear(rgb))
+        val g0 = grayAt(lab[0].coerceIn(lBlack, lWhite))
+        val da = lab[1] - g0[1]; val db = lab[2] - g0[2]
+        val chroma = sqrt(da * da + db * db)
+        // Bands by the color's own hue: measured from the panel's gray (violet in the shadows), dark
+        // browns and skin would land in the wrong band.
+        val hue = (Math.toDegrees(atan2(lab[2], lab[1]).toDouble()).toFloat() + 360f) % 360f
+        var strength = 0f; var target = 0f
+        for (b in BANDS.indices) if (depths[b] > 0f) {
+            val s = depths[b] * BANDS[b].weight(hue)
+            strength += s; target += s * bandInkL[b]
+        }
+        if (strength <= 0f) return rgb
+        target /= strength
+        val w = strength.coerceAtMost(1f) * smoothstep(ENRICH_CHROMA, chroma)
+        if (w <= 0f) return rgb
+        lab[0] += w * (target - lab[0])
+        val boost = 1f + ENRICH_CHROMA_GAIN * w
+        lab[1] = g0[1] + da * boost; lab[2] = g0[2] + db * boost
+        return Srgb.fromLinear(OkLab.toLinear(lab))
+    }
+
+    fun enrich(rgb: IntArray, depths: FloatArray): IntArray =
+        if (depths.all { it <= 0f }) rgb else IntArray(rgb.size) { enrich(rgb[it], depths) }
+
+    /** Blue depth only. */
+    fun enrich(rgb: Int, blue: Float): Int = enrich(rgb, floatArrayOf(0f, 0f, 0f, blue))
+
+    /**
+     * A hue band in OKLab degrees: fades in over [inStart]..[inEnd], full until [outStart], fades
+     * out by [outEnd] (may wrap past 360).
+     */
+    private class Band(val inStart: Float, val inEnd: Float, val outStart: Float, val outEnd: Float) {
+        fun weight(hue: Float): Float {
+            fun rel(h: Float) = (h - inStart + 360f) % 360f
+            val r = rel(hue)
+            val a = rel(inEnd); val b = rel(outStart); val c = rel(outEnd)
+            return when {
+                r <= a -> r / a
+                r <= b -> 1f
+                r <= c -> 1f - (r - b) / (c - b)
+                else -> 0f
+            }.let { it * it * (3 - 2 * it) }
+        }
+    }
+
     companion object {
         private const val STEPS = 256
         private const val HUES = 72
@@ -127,6 +189,16 @@ class GamutMap(inks: List<Int> = Ink.entries.map { it.rgb }) {
         private val KEEP_FADE = 0.25f..0.45f
         /** Most colorful reproducible chroma at the hue: same fade. */
         private val CUSP_FADE = 0.035f..0.06f
+        /** Chroma over which [enrich] fades in (neutrals and near-neutrals are left alone). */
+        private val ENRICH_CHROMA = 0.02f..0.08f
+        private const val ENRICH_CHROMA_GAIN = 0.4f
+        /** Hue bands for [enrich], in depth order: red, yellow, green, blue. */
+        private val BANDS = arrayOf(
+            Band(330f, 350f, 25f, 40f),   // red (magenta-red to red; stops short of skin at 45–55°)
+            Band(60f, 75f, 105f, 120f),   // yellow
+            Band(110f, 125f, 185f, 200f), // green
+            Band(195f, 225f, 310f, 340f), // blue (cyan-blue to violet)
+        )
 
         private fun smoothstep(range: ClosedFloatingPointRange<Float>, v: Float): Float {
             val t = ((v - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)

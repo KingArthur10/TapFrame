@@ -495,6 +495,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (s.highlights != 0f) append(", highlights %+.2f".format(s.highlights))
             if (s.shadows != 0f) append(", shadows %+.2f".format(s.shadows))
             if (s.hue != 0f) append(", hue %+.0f°".format(s.hue))
+            listOf("red" to s.redDepth, "yellow" to s.yellowDepth, "green" to s.greenDepth, "blue" to s.blueDepth)
+                .filter { it.second != 0f }.forEach { (name, v) -> append(", $name depth %.1f".format(v)) }
             if (s.effect == Effect.AI_CARTOON) append(", ${aiStyleLabel(s.aiStyle)}")
             if (s.keepHue) append(", true hues")
         }

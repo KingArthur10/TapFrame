@@ -409,6 +409,8 @@ private fun caption(s: Settings, current: Settings?): String = when {
     s.saturation != current.saturation -> if (s.saturation > current.saturation) "More color" else "Less color"
     s.keepHue != current.keepHue -> if (s.keepHue) "True hues" else "Bolder hues"
     s.aiStyle != current.aiStyle -> "Other AI style"
+    s.blueDepth != current.blueDepth -> if (s.blueDepth > current.blueDepth) "Deeper blues" else "Lighter blues"
+    s.inkDepths.contentEquals(current.inkDepths).not() -> "Other ink depth"
     else -> "Current"
 }
 
@@ -574,6 +576,17 @@ private fun AdvancedScreen(vm: AppViewModel) {
             LabeledSlider(if (photo) "Local contrast" else "Outlines", s.detail, Settings.DETAIL, "×%.1f") { set(s.copy(detail = it)) }
             LabeledSlider("Saturation", s.saturation, Settings.SATURATION, "×%.2f") { set(s.copy(saturation = it)) }
             LabeledSlider("Hue", s.hue, Settings.HUE, "%+.0f°") { set(s.copy(hue = it)) }
+            Text("Ink depth", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Moves each color toward its ink's own lightness so it prints in more solid ink and reads stronger: " +
+                    "blues and greens get darker (blue skies), yellows lighter. Skin tones are left alone. " +
+                    "The green ink is dark, so judge green depth on the frame itself.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            LabeledSlider("Red depth", s.redDepth, Settings.BLUE_DEPTH, "%.2f") { set(s.copy(redDepth = it)) }
+            LabeledSlider("Yellow depth", s.yellowDepth, Settings.BLUE_DEPTH, "%.2f") { set(s.copy(yellowDepth = it)) }
+            LabeledSlider("Green depth", s.greenDepth, Settings.BLUE_DEPTH, "%.2f") { set(s.copy(greenDepth = it)) }
+            LabeledSlider("Blue depth", s.blueDepth, Settings.BLUE_DEPTH, "%.2f") { set(s.copy(blueDepth = it)) }
             SwitchRow(
                 "True hues",
                 if (photo && s.tone == ToneMap.VIVID) "Not used with Vivid tone mapping."

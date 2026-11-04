@@ -130,10 +130,16 @@ class PhotoPipelineTest {
     }
 
     @Test
-    fun frameSimLeavesSolidAreasAndFlattensMixedOnes() {
-        val solid = ByteArray(Frame.WIDTH * Frame.HEIGHT) { Ink.BLACK.code.toByte() }
-        val sim = FrameSim.simulate(solid, Frame.WIDTH, Frame.HEIGHT)
-        assertTrue(channelsClose(sim[5000], Ink.BLACK.rgb, 1))
+    fun frameSimKeepsSolidLightnessAndHueAndFlattensMixedOnes() {
+        // Solid areas keep the ink's lightness and hue (chroma gets the preview's gain).
+        for (ink in listOf(Ink.BLACK, Ink.BLUE, Ink.YELLOW)) {
+            val solid = ByteArray(Frame.WIDTH * Frame.HEIGHT) { ink.code.toByte() }
+            val shown = OkLab.fromLinear(Srgb.toLinear(FrameSim.simulate(solid, Frame.WIDTH, Frame.HEIGHT)[5000]))
+            val inkLab = OkLab.fromLinear(Srgb.toLinear(ink.rgb))
+            assertEquals(ink.name, inkLab[0], shown[0], 0.02f)
+            val hue = { v: FloatArray -> Math.toDegrees(kotlin.math.atan2(v[2], v[1]).toDouble()) }
+            assertEquals(ink.name, hue(inkLab), hue(shown), 5.0) // the gain clips at the edge of sRGB
+        }
         // A black/white checker shows lighter than the plain average of its inks.
         val checker = ByteArray(Frame.WIDTH * Frame.HEIGHT) { i ->
             (if ((i % Frame.WIDTH + i / Frame.WIDTH) % 2 == 0) Ink.BLACK.code else Ink.WHITE.code).toByte()
@@ -181,6 +187,25 @@ class PhotoPipelineTest {
             sheet.setRGB(pw * i, ph, pw, ph, Preview.portraitArgb(codes), 0, pw)
         }
         ImageIO.write(sheet, "png", File(File("build/photos").apply { mkdirs() }, "real_tones.png"))
+    }
+
+    /**
+     * Optional: with TAPFRAME_PHOTO (304x400 PNG), writes Vivid and Balanced at color depth 0, 0.5
+     * and 1 (simulated frame view) to build/photos/real_depth.png.
+     */
+    @Test
+    fun exportRealPhotoDepth() {
+        val path = System.getenv("TAPFRAME_PHOTO") ?: return
+        val img = ImageIO.read(File(path))
+        val photo = IntArray(pw * ph).also { img.getRGB(0, 0, pw, ph, it, 0, pw) }.map { it and 0xFFFFFF }.toIntArray()
+        val variants = listOf(ToneMap.VIVID, ToneMap.BALANCED).flatMap { t ->
+            listOf(0f, 0.5f, 1f).map { Settings(Dither.Method.FLOYD_STEINBERG, t, blueDepth = it) }
+        }
+        val sheet = BufferedImage(pw * 3, ph * 2, BufferedImage.TYPE_INT_RGB)
+        variants.forEachIndexed { i, s ->
+            sheet.setRGB(pw * (i % 3), ph * (i / 3), pw, ph, PhotoPipeline.simulatedPortrait(PhotoPipeline.render(photo, s)), 0, pw)
+        }
+        ImageIO.write(sheet, "png", File(File("build/photos").apply { mkdirs() }, "real_depth.png"))
     }
 
     /**
